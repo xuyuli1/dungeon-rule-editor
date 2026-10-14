@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/dungeon-rules/v1",
+  "title": "Dungeon rules runtime JSON v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "settings", "types", "modules", "connections"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "settings": {
+      "type": "object", "additionalProperties": false,
+      "required": ["totalModules", "startTypeId", "doorWidth"],
+      "properties": {
+        "totalModules": { "type": "integer", "minimum": 1, "maximum": 500 },
+        "startTypeId": { "$ref": "#/$defs/id" },
+        "doorWidth": { "type": "integer", "minimum": 1, "description": "Millimetres; shared by all ports" }
+      }
+    },
+    "types": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/moduleType" } },
+    "modules": { "type": "array", "items": { "$ref": "#/$defs/module" } },
+    "connections": { "type": "array", "items": { "$ref": "#/$defs/connection" } }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]*$" },
+    "spawnEntry": { "type": "object", "additionalProperties": false, "required": ["id", "weight"], "properties": { "id": { "type": "string", "minLength": 1 }, "weight": { "type": "number", "exclusiveMinimum": 0 } } },
+    "spawnRule": { "type": "object", "additionalProperties": false, "required": ["min", "max", "entries"], "properties": { "min": { "type": "integer", "minimum": 0 }, "max": { "type": "integer", "minimum": 0 }, "entries": { "type": "array", "items": { "$ref": "#/$defs/spawnEntry" } } } },
+    "moduleType": { "type": "object", "additionalProperties": false, "required": ["id", "percent", "requiredMin", "items", "enemies"], "properties": { "id": { "$ref": "#/$defs/id" }, "percent": { "type": "number", "minimum": 0, "maximum": 100 }, "requiredMin": { "type": "integer", "minimum": 0 }, "items": { "$ref": "#/$defs/spawnRule" }, "enemies": { "$ref": "#/$defs/spawnRule" } } },
+    "bounds": { "type": "object", "additionalProperties": false, "required": ["minX", "maxX", "minZ", "maxZ"], "properties": { "minX": { "type": "integer" }, "maxX": { "type": "integer" }, "minZ": { "type": "integer" }, "maxZ": { "type": "integer" } } },
+    "port": { "type": "object", "additionalProperties": false, "required": ["id", "edge", "x", "z"], "properties": { "id": { "$ref": "#/$defs/id" }, "edge": { "enum": ["N", "E", "S", "W"] }, "x": { "type": "integer" }, "z": { "type": "integer" } } },
+    "module": { "type": "object", "additionalProperties": false, "required": ["id", "typeId", "bounds", "ports"], "properties": { "id": { "$ref": "#/$defs/id" }, "typeId": { "$ref": "#/$defs/id" }, "bounds": { "$ref": "#/$defs/bounds" }, "ports": { "type": "array", "items": { "$ref": "#/$defs/port" } } } },
+    "connection": { "type": "object", "additionalProperties": false, "required": ["a", "b", "weightAB", "weightBA"], "properties": { "a": { "$ref": "#/$defs/id" }, "b": { "$ref": "#/$defs/id" }, "weightAB": { "type": "number", "exclusiveMinimum": 0 }, "weightBA": { "type": "number", "exclusiveMinimum": 0 } } }
+  }
+}

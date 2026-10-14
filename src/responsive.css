@@ -1,0 +1,18 @@
+@media (max-width: 700px) {
+  body { min-width: 320px; }
+  .topbar { padding: 16px; }
+  .top-actions { gap: 6px; }
+  .tabs { padding: 0 16px; gap: 18px; overflow-x: auto; white-space: nowrap; }
+  .page { padding: 18px 14px; }
+  .row.three, .row.two, .row.four { grid-template-columns: 1fr; }
+  .side-panel { display: block; }
+  .target-head, .target-row { grid-template-columns: 1.4fr .7fr .7fr .7fr; font-size: 11px; }
+  .card { padding: 16px; }
+  .graph { margin: 0 -16px; }
+  .connection-add { grid-template-columns: 1fr auto 1fr; }
+  .connection-add button { grid-column: 1 / -1; }
+  .preview-controls .field { width: 150px; }
+  .preview-stage { min-height: 400px; }
+  .preview-svg { height: 390px; }
+  .module-svg { height: 300px; }
+}
