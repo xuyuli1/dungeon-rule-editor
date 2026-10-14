@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ReactFlow, Background, Controls, type Connection as FlowConnection, type Edge as FlowEdge, type Node as FlowNode } from '@xyflow/react'
 import { downloadJson, importFbx, openProject, readJson, saveProject } from './io'
 import { canonicalConnection, emptyEditor, emptyProject, exampleProject, isId, meters, pairKey, toMm, type Bounds, type Edge, type EditorState, type Module, type ModuleType, type Port, type RuntimeProject, type SpawnRule, validateProject, typeTargets } from './model'
 import { rotatedBounds, type PreviewResult } from './generator'
+import { gridStep, remapPorts, unitsPerPixel } from './geometry'
 
 type Tab = 'global' | 'types' | 'modules' | 'preview'
 const edges: Edge[] = ['N', 'E', 'S', 'W']
@@ -13,8 +14,25 @@ const uniqueId = (existing: string[], prefix: string) => { let i = 1; while (exi
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error)
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="field"><span>{label}</span>{children}</label> }
-function NumberField({ label, value, onChange, step = 1, min, max, suffix }: { label: string; value: number; onChange: (n: number) => void; step?: number; min?: number; max?: number; suffix?: string }) {
-  return <Field label={label}><div className="input-unit"><input type="number" value={Number.isFinite(value) ? value : ''} step={step} min={min} max={max} onChange={e => onChange(num(e.target.value))} />{suffix && <small>{suffix}</small>}</div></Field>
+function NumberField({ label, value, onChange, step = 1, min, max, suffix, validate }: { label: string; value: number; onChange: (n: number) => void; step?: number; min?: number; max?: number; suffix?: string; validate?: (n: number) => string | undefined }) {
+  const [draft, setDraft] = useState(String(value))
+  const [error, setError] = useState('')
+  const editing = useRef(false)
+  const cancelCommit = useRef(false)
+  useEffect(() => { if (!editing.current) { setDraft(String(value)); setError('') } }, [value])
+  const commit = () => {
+    const raw = draft.trim()
+    const parsed = Number(raw)
+    const message = !raw || !/^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(raw) || !Number.isFinite(parsed) ? '请输入有效数字'
+      : min !== undefined && parsed < min ? `不能小于 ${min}`
+        : max !== undefined && parsed > max ? `不能大于 ${max}`
+          : Number.isInteger(step) && !Number.isInteger(parsed) ? '请输入整数' : validate?.(parsed)
+    if (message) { setError(message); return }
+    setError('')
+    setDraft(String(parsed))
+    if (parsed !== value) onChange(parsed)
+  }
+  return <Field label={label}><div className="input-unit"><input type="text" inputMode="decimal" aria-invalid={!!error} value={draft} onFocus={() => { editing.current = true }} onChange={e => { setDraft(e.target.value); setError('') }} onBlur={() => { editing.current = false; if (cancelCommit.current) { cancelCommit.current = false; setDraft(String(value)); setError('') } else commit() }} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { cancelCommit.current = true; e.currentTarget.blur() } }} />{suffix && <small>{suffix}</small>}</div>{error && <small className="field-error" role="alert">{error}</small>}</Field>
 }
 function SpawnEditor({ title, rule, onChange }: { title: string; rule: SpawnRule; onChange: (next: SpawnRule) => void }) {
   return <section className="subsection"><div className="section-head"><h3>{title}</h3></div><div className="row two">
@@ -34,8 +52,26 @@ function ModuleCanvas({ module, doorWidth, onPortChange, onAddPort, onDeletePort
   const [selectedEdge, setSelectedEdge] = useState<Edge>('N')
   const b = module.bounds
   const width = b.maxX - b.minX, depth = b.maxZ - b.minZ
-  const pad = Math.max(width, depth) * 0.18 + 500
-  const viewBox = `${b.minX - pad} ${-b.maxZ - pad} ${width + pad * 2} ${depth + pad * 2}`
+  const displayMinX = Math.min(b.minX, 0), displayMaxX = Math.max(b.maxX, 0)
+  const displayMinZ = Math.min(b.minZ, 0), displayMaxZ = Math.max(b.maxZ, 0)
+  const displayWidth = displayMaxX - displayMinX, displayDepth = displayMaxZ - displayMinZ
+  const pad = Math.max(displayWidth, displayDepth) * 0.18 + 500
+  const viewWidth = displayWidth + pad * 2, viewHeight = displayDepth + pad * 2
+  const viewBox = `${displayMinX - pad} ${-displayMaxZ - pad} ${viewWidth} ${viewHeight}`
+  const [pixelSize, setPixelSize] = useState({ width: 800, height: 380 })
+  useLayoutEffect(() => {
+    const svg = svgRef.current
+    if (!svg) return
+    const measure = () => { const rect = svg.getBoundingClientRect(); setPixelSize({ width: rect.width, height: rect.height }) }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(svg)
+    return () => observer.disconnect()
+  }, [])
+  const unit = unitsPerPixel(viewWidth, viewHeight, pixelSize.width, pixelSize.height)
+  const step = gridStep(Math.max(width, depth))
+  const labelFontSize = Math.min(unit * 12, 4000)
+  const labelScale = unit * 12 / labelFontSize
   const placePort = useCallback((port: Port, clientX: number, clientY: number) => {
     const svg = svgRef.current
     if (!svg) return
@@ -50,15 +86,16 @@ function ModuleCanvas({ module, doorWidth, onPortChange, onAddPort, onDeletePort
   }, [b, doorWidth, onPortChange])
   return <div className="module-canvas"><div className="canvas-toolbar"><span>X →　Z ↑　单位：米</span><select value={selectedEdge} onChange={e => setSelectedEdge(e.target.value as Edge)}>{edges.map(edge => <option key={edge} value={edge}>{edgeNames[edge]}</option>)}</select><button onClick={() => onAddPort(selectedEdge)}>＋ 接口</button></div>
     <svg ref={svgRef} viewBox={viewBox} className="module-svg" onPointerMove={e => { if (active) { const port = module.ports.find(p => p.id === active); if (port) placePort(port, e.clientX, e.clientY) } }} onPointerUp={() => setActive(null)} onPointerCancel={() => setActive(null)}>
-      <defs><pattern id="grid" width="1000" height="1000" patternUnits="userSpaceOnUse"><path d="M 1000 0 L 0 0 0 1000" fill="none" stroke="#263349" strokeWidth="35" /></pattern></defs>
-      <rect x={b.minX - pad} y={-b.maxZ - pad} width={width + pad * 2} height={depth + pad * 2} fill="url(#grid)" />
-      <rect x={b.minX} y={-b.maxZ} width={width} height={depth} fill="#21354a" stroke="#65b9d4" strokeWidth="90" />
-      <line x1="-300" y1="0" x2="300" y2="0" stroke="#f4ca7b" strokeWidth="70" /><line x1="0" y1="-300" x2="0" y2="300" stroke="#f4ca7b" strokeWidth="70" />
+      <defs><pattern id="grid" width={step} height={step} patternUnits="userSpaceOnUse"><path d={`M ${step} 0 L 0 0 0 ${step}`} fill="none" stroke="#382458" strokeWidth={unit} /></pattern></defs>
+      <rect x={displayMinX - pad} y={-displayMaxZ - pad} width={viewWidth} height={viewHeight} fill="url(#grid)" />
+      <rect x={b.minX} y={-b.maxZ} width={width} height={depth} fill="#241138" stroke="#a856ff" strokeWidth={unit * 2} />
+      <line x1={-unit * 8} y1="0" x2={unit * 8} y2="0" stroke="#cf9eff" strokeWidth={unit * 2} /><line x1="0" y1={-unit * 8} x2="0" y2={unit * 8} stroke="#cf9eff" strokeWidth={unit * 2} />
       {module.ports.map(port => <g key={port.id} onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); setActive(port.id) }} onDoubleClick={() => onDeletePort(port.id)} className="port-handle">
-        <circle cx={port.x} cy={-port.z} r="240" fill={active === port.id ? '#fff' : '#f4ca7b'} stroke="#111d2d" strokeWidth="70" />
-        <text x={port.x + 260} y={-port.z - 260} fill="#e7eff8" fontSize="420" paintOrder="stroke" stroke="#172233" strokeWidth="90">{port.id}</text>
+        <circle cx={port.x} cy={-port.z} r={unit * 15} fill="transparent" />
+        <circle cx={port.x} cy={-port.z} r={unit * 7} fill={active === port.id ? '#6815be' : '#cf9eff'} stroke="#170b24" strokeWidth={unit * 2} pointerEvents="none" />
+        <text transform={`translate(${port.x + unit * 10} ${-port.z - unit * 10}) scale(${labelScale})`} fill="#f1dfff" fontSize={labelFontSize} paintOrder="stroke" stroke="#170b24" strokeWidth={unit * 3 / labelScale} pointerEvents="none">{port.id}</text>
       </g>)}
-    </svg><p className="hint">拖动圆点调整接口位置；双击圆点删除。黄色十字是模型原点。</p>
+    </svg><p className="hint">拖动圆点调整接口位置；双击圆点删除。紫色十字是模型原点。</p>
   </div>
 }
 
@@ -145,8 +182,8 @@ export default function App() {
     mutate(draft => draft.connections.push(canonicalConnection(a, b)))
   }
   const onConnect = (connection: FlowConnection) => addConnection(connection.source, connection.target)
-  const graphNodes: FlowNode[] = project.types.map((t, i) => ({ id: t.id, position: editor.graphPositions[t.id] ?? { x: (i % 3) * 240, y: Math.floor(i / 3) * 160 }, data: { label: `${t.name} · ${t.percent}%` }, style: { background: '#1d2b3c', color: '#f0f4fa', border: `2px solid ${t.color}`, borderRadius: 12, padding: 14, width: 170 }, selected: selectedType === t.id }))
-  const graphEdges: FlowEdge[] = project.connections.map(c => ({ id: pairKey(c.a, c.b), source: c.a, target: c.b, label: c.a === c.b ? `${c.weightAB}` : `${c.weightAB} / ${c.weightBA}`, style: { stroke: '#8aa7c4', strokeWidth: 2 }, labelStyle: { fill: '#e8f0fa', fontWeight: 700 }, labelBgStyle: { fill: '#1b2a3c' } }))
+  const graphNodes: FlowNode[] = project.types.map((t, i) => ({ id: t.id, position: editor.graphPositions[t.id] ?? { x: (i % 3) * 240, y: Math.floor(i / 3) * 160 }, data: { label: `${t.name} · ${t.percent}%` }, style: { background: '#241138', color: '#e8caff', border: `2px solid ${t.color}`, borderRadius: 2, padding: 14, width: 170 }, selected: selectedType === t.id }))
+  const graphEdges: FlowEdge[] = project.connections.map(c => ({ id: pairKey(c.a, c.b), source: c.a, target: c.b, label: c.a === c.b ? `${c.weightAB}` : `${c.weightAB} / ${c.weightBA}`, style: { stroke: '#a856ff', strokeWidth: 2 }, labelStyle: { fill: '#e8caff', fontWeight: 700 }, labelBgStyle: { fill: '#241138' } }))
   const setBounds = (key: keyof Bounds, value: number) => {
     if (!module) return
     updateModule(module.id, m => {
@@ -187,12 +224,8 @@ export default function App() {
       else if (module) {
         const bounds = await importFbx(file)
         updateModule(module.id, m => {
+          m.ports = remapPorts(m.ports, m.bounds, bounds, project.settings.doorWidth)
           m.bounds = bounds
-          const half = project.settings.doorWidth / 2
-          for (const port of m.ports) {
-            if (port.edge === 'N' || port.edge === 'S') { port.z = port.edge === 'N' ? bounds.maxZ : bounds.minZ; port.x = Math.round(Math.max(bounds.minX + half, Math.min(bounds.maxX - half, port.x))) }
-            else { port.x = port.edge === 'E' ? bounds.maxX : bounds.minX; port.z = Math.round(Math.max(bounds.minZ + half, Math.min(bounds.maxZ - half, port.z))) }
-          }
         })
         setFiles(current => new Map(current).set(module.id, file))
         setEditor(current => ({ ...current, modelNames: { ...current.modelNames, [module.id]: file.name } }))
@@ -222,10 +255,10 @@ export default function App() {
             <section className="card"><h2>连接权重</h2><div className="connection-add"><select value={edgeA} onChange={e => setEdgeA(e.target.value)}><option value="">类型 A</option>{project.types.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select><span>↔</span><select value={edgeB} onChange={e => setEdgeB(e.target.value)}><option value="">类型 B</option>{project.types.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select><button onClick={() => addConnection(edgeA, edgeB)}>添加关系</button></div>
               <div className="relations">{project.connections.map(c => <div className="relation" key={pairKey(c.a, c.b)}><strong>{project.types.find(t => t.id === c.a)?.name ?? c.a} ↔ {project.types.find(t => t.id === c.b)?.name ?? c.b}</strong><label>{c.a} → {c.b}<input type="number" min="0.001" step="0.1" value={c.weightAB} onChange={e => mutate(d => { const target = d.connections.find(v => pairKey(v.a, v.b) === pairKey(c.a, c.b))!; target.weightAB = num(e.target.value) })} /></label>{c.a !== c.b && <label>{c.b} → {c.a}<input type="number" min="0.001" step="0.1" value={c.weightBA} onChange={e => mutate(d => { const target = d.connections.find(v => pairKey(v.a, v.b) === pairKey(c.a, c.b))!; target.weightBA = num(e.target.value) })} /></label>}<button className="icon danger" title="删除双向连接" onClick={() => mutate(d => { d.connections = d.connections.filter(v => pairKey(v.a, v.b) !== pairKey(c.a, c.b)) })}>×</button></div>)}</div>{!project.connections.length && <p className="empty">尚无连接关系。</p>}
             </section></div></div></div>}
-      {tab === 'modules' && <div className="page modules-page"><div className="page-title"><div><span className="eyebrow">03 / MODULE LIBRARY</span><h1>具体模块</h1><p>导入 FBX 提取占地；在矩形边缘拖动连接口。黄色十字标出模型原点。</p></div></div><div className="split-layout"><aside className="side-panel"><section className="card"><h2>模块库</h2><div className="list">{project.modules.map(m => <button key={m.id} className={`list-item ${selectedModule === m.id ? 'selected' : ''}`} onClick={() => setSelectedModule(m.id)}><i style={{ background: project.types.find(t => t.id === m.typeId)?.color ?? '#64748b' }} /><span>{m.id}<small>{project.types.find(t => t.id === m.typeId)?.name ?? m.typeId} · {m.ports.length} 个接口</small></span></button>)}</div><div className="add-form"><input placeholder="模块 ID，如 room_a" value={newModuleId} onChange={e => setNewModuleId(e.target.value)} /><select value={newModuleType} onChange={e => setNewModuleType(e.target.value)}><option value="">选择类型</option>{project.types.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select><button onClick={addModule}>＋ 创建模块</button></div></section></aside>
+      {tab === 'modules' && <div className="page modules-page"><div className="page-title"><div><span className="eyebrow">03 / MODULE LIBRARY</span><h1>具体模块</h1><p>导入 FBX 提取占地；在矩形边缘拖动连接口。紫色十字标出模型原点。</p></div></div><div className="split-layout"><aside className="side-panel"><section className="card"><h2>模块库</h2><div className="list">{project.modules.map(m => <button key={m.id} className={`list-item ${selectedModule === m.id ? 'selected' : ''}`} onClick={() => setSelectedModule(m.id)}><i style={{ background: project.types.find(t => t.id === m.typeId)?.color ?? '#64748b' }} /><span>{m.id}<small>{project.types.find(t => t.id === m.typeId)?.name ?? m.typeId} · {m.ports.length} 个接口</small></span></button>)}</div><div className="add-form"><input placeholder="模块 ID，如 room_a" value={newModuleId} onChange={e => setNewModuleId(e.target.value)} /><select value={newModuleType} onChange={e => setNewModuleType(e.target.value)}><option value="">选择类型</option>{project.types.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select><button onClick={addModule}>＋ 创建模块</button></div></section></aside>
           <div className="main-panel">{module ? <><section className="card"><div className="section-head"><div><h2>{module.id}</h2><p className="hint">{editor.modelNames[module.id] ?? '尚未导入 FBX，可先手动编辑占地'}</p></div><div className="inline-actions"><button onClick={() => fbxInput.current?.click()}>导入 / 替换 FBX</button><button className="danger-text" onClick={() => removeModule(module.id)}>删除模块</button></div></div><div className="row three"><Field label="所属类型"><select value={module.typeId} onChange={e => updateModule(module.id, m => { m.typeId = e.target.value })}>{project.types.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></Field><div className="metric"><span>宽度 X</span><strong>{meters(module.bounds.maxX - module.bounds.minX)} m</strong></div><div className="metric"><span>深度 Z</span><strong>{meters(module.bounds.maxZ - module.bounds.minZ)} m</strong></div></div></section>
             <section className="card"><h2>2D 占地与接口</h2><ModuleCanvas module={module} doorWidth={project.settings.doorWidth} onPortChange={(id, next) => updateModule(module.id, m => { const i = m.ports.findIndex(p => p.id === id); if (i >= 0) m.ports[i] = next })} onAddPort={edge => updateModule(module.id, m => { const b = m.bounds; const half = project.settings.doorWidth / 2; if ((edge === 'N' || edge === 'S' ? b.maxX - b.minX : b.maxZ - b.minZ) < project.settings.doorWidth) { setNotice('该边短于门洞宽度'); return } const id = uniqueId(m.ports.map(p => p.id), 'port'); const centerX = Math.round((b.minX + b.maxX) / 2), centerZ = Math.round((b.minZ + b.maxZ) / 2); m.ports.push({ id, edge, x: edge === 'E' ? b.maxX : edge === 'W' ? b.minX : Math.max(b.minX + half, Math.min(b.maxX - half, centerX)), z: edge === 'N' ? b.maxZ : edge === 'S' ? b.minZ : Math.max(b.minZ + half, Math.min(b.maxZ - half, centerZ)) }) })} onDeletePort={id => updateModule(module.id, m => { m.ports = m.ports.filter(p => p.id !== id) })} /></section>
-            <section className="card"><h2>占地边界（相对模型原点）</h2><div className="row four">{(['minX', 'maxX', 'minZ', 'maxZ'] as const).map(key => <NumberField key={key} label={key} value={module.bounds[key] / 1000} step={0.001} suffix="m" onChange={n => setBounds(key, n)} />)}</div><p className="hint">手动修改边界会保留原点偏移，并自动把接口约束在所在边上。</p></section>
+            <section className="card"><h2>占地边界（相对模型原点）</h2><div className="row four">{(['minX', 'maxX', 'minZ', 'maxZ'] as const).map(key => <NumberField key={`${module.id}-${key}`} label={key} value={module.bounds[key] / 1000} step={0.001} suffix="m" validate={n => { const mm = toMm(n); const other = key.endsWith('X') ? (key === 'minX' ? module.bounds.maxX : module.bounds.minX) : (key === 'minZ' ? module.bounds.maxZ : module.bounds.minZ); return key.startsWith('min') ? mm >= other ? '最小值必须小于最大值' : undefined : mm <= other ? '最大值必须大于最小值' : undefined }} onChange={n => setBounds(key, n)} />)}</div><p className="hint">手动修改边界会保留原点偏移，并自动把接口约束在所在边上。</p></section>
             <section className="card"><h2>连接口</h2>{module.ports.map(port => <div className="port-row" key={port.id}><strong>{port.id}</strong><span>{edgeNames[port.edge]}</span><span>({meters(port.x)}, {meters(port.z)}) m</span><button className="icon danger" onClick={() => updateModule(module.id, m => { m.ports = m.ports.filter(p => p.id !== port.id) })}>×</button></div>)}{!module.ports.length && <p className="empty">使用上方画布的“＋ 接口”添加。</p>}</section>
           </> : <div className="card empty large">选择或创建一个模块。</div>}</div></div></div>}
       {tab === 'preview' && <div className="page preview-page"><div className="page-title"><div><span className="eyebrow">04 / GENERATION PREVIEW</span><h1>随机地图预览</h1><p>矩形按真实占地绘制；同一随机种子可复现布局。</p></div><div className="preview-controls"><Field label="随机种子"><input type="number" min="0" max="4294967295" value={seed} onChange={e => setSeed(num(e.target.value) >>> 0)} /></Field><button className="quiet" onClick={() => setSeed(Math.floor(Math.random() * 4294967295))}>换种子</button><button className="primary" disabled={generating || !!errors.length} onClick={startPreview}>{generating ? '生成中…' : '生成预览'}</button>{generating && <button onClick={() => { stopWorker(); setNotice('已停止搜索') }}>停止</button>}</div></div>

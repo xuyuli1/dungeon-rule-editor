@@ -16,14 +16,20 @@ export function downloadJson(project: RuntimeProject): void {
 export async function readJson(file: File): Promise<RuntimeProject> {
   return parseRuntime(JSON.parse(await file.text()))
 }
+export function fbxMetersPerUnit(unitScaleFactor: unknown): number {
+  if (unitScaleFactor === undefined) return 0.01 // FBX defaults to centimetres.
+  if (typeof unitScaleFactor !== 'number' || !Number.isFinite(unitScaleFactor) || unitScaleFactor <= 0) throw new Error('FBX 文件单位无效')
+  return unitScaleFactor / 100 // FBX UnitScaleFactor is centimetres per file unit.
+}
 export async function importFbx(file: File): Promise<Bounds> {
   if (!file.name.toLowerCase().endsWith('.fbx')) throw new Error('第一版只支持 .fbx 文件')
   const [{ Box3 }, { FBXLoader }] = await Promise.all([import('three'), import('three/addons/loaders/FBXLoader.js')])
   const model = new FBXLoader().parse(await file.arrayBuffer(), '')
+  const metersPerUnit = fbxMetersPerUnit(model.userData.unitScaleFactor)
   model.updateWorldMatrix(true, true)
   const box = new Box3().setFromObject(model, true)
   if (box.isEmpty() || !Number.isFinite(box.min.x) || !Number.isFinite(box.max.z)) throw new Error('未找到有效的模型网格')
-  const bounds = { minX: toMm(box.min.x), maxX: toMm(box.max.x), minZ: toMm(box.min.z), maxZ: toMm(box.max.z) }
+  const bounds = { minX: toMm(box.min.x * metersPerUnit), maxX: toMm(box.max.x * metersPerUnit), minZ: toMm(box.min.z * metersPerUnit), maxZ: toMm(box.max.z * metersPerUnit) }
   if (bounds.minX >= bounds.maxX || bounds.minZ >= bounds.maxZ) throw new Error('模型在 X-Z 平面上的占地为零')
   return bounds
 }

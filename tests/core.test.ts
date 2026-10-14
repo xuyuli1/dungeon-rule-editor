@@ -2,9 +2,28 @@ import { describe, expect, it } from 'vitest'
 import { canonicalConnection, exampleProject, exportRules, parseRuntime, typeTargets, validateProject } from '../src/model'
 import { generate, overlaps, rotatedBounds, rotate } from '../src/generator'
 import JSZip from 'jszip'
-import { buildProjectZip, openProject } from '../src/io'
+import { buildProjectZip, fbxMetersPerUnit, openProject } from '../src/io'
+import { gridStep, remapPorts, unitsPerPixel } from '../src/geometry'
 
 describe('rules and geometry', () => {
+  it('converts FBX file units to metres and preserves relative port positions', () => {
+    expect(fbxMetersPerUnit(1)).toBe(0.01)
+    expect(fbxMetersPerUnit(100)).toBe(1)
+    expect(fbxMetersPerUnit(undefined)).toBe(0.01)
+    expect(() => fbxMetersPerUnit(0)).toThrow('FBX 文件单位无效')
+    const before = { minX: -2050000, maxX: 2050000, minZ: -2050000, maxZ: 2050000 }
+    const after = { minX: -20500, maxX: 20500, minZ: -20500, maxZ: 20500 }
+    expect(remapPorts([{ id: 'door', edge: 'N', x: 1025000, z: 2050000 }], before, after, 2000))
+      .toEqual([{ id: 'door', edge: 'N', x: 10250, z: 20500 }])
+  })
+  it('keeps port handles at a fixed screen size across model scales', () => {
+    const normal = unitsPerPixel(56000, 56000, 800, 380)
+    const large = unitsPerPixel(5600000, 5600000, 800, 380)
+    expect(normal).toBeCloseTo(56000 / 380)
+    expect(large).toBe(normal * 100)
+    expect(gridStep(41000)).toBe(5000)
+    expect(gridStep(4100000)).toBe(500000)
+  })
   it('uses largest remainders and includes required counts in targets', () => {
     const p = exampleProject()
     p.settings.totalModules = 13
