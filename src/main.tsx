@@ -5,6 +5,7 @@ import '@xyflow/react/dist/style.css'
 import './styles.css'
 import './grid-theme.css'
 import './responsive.css'
+import './single-workspace.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode><App /></React.StrictMode>,
