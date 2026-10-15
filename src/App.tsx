@@ -86,14 +86,14 @@ function ModuleCanvas({ module, doorWidth, onPortChange, onAddPort, onDeletePort
   }, [b, doorWidth, onPortChange])
   return <div className="module-canvas"><div className="canvas-toolbar"><span>X →　Z ↑　meters</span><select value={selectedEdge} onChange={e => setSelectedEdge(e.target.value as Edge)}>{edges.map(edge => <option key={edge} value={edge}>{edgeNames[edge]}</option>)}</select><button onClick={() => onAddPort(selectedEdge)}>＋ Add port</button></div>
     <svg ref={svgRef} viewBox={viewBox} className="module-svg" onPointerMove={e => { if (active) { const port = module.ports.find(p => p.id === active); if (port) placePort(port, e.clientX, e.clientY) } }} onPointerUp={() => setActive(null)} onPointerCancel={() => setActive(null)}>
-      <defs><pattern id="grid" width={step} height={step} patternUnits="userSpaceOnUse"><path d={`M ${step} 0 L 0 0 0 ${step}`} fill="none" stroke="#d3d0ff" strokeWidth={unit} /></pattern></defs>
+      <defs><pattern id="grid" width={step} height={step} patternUnits="userSpaceOnUse"><path d={`M ${step} 0 L 0 0 0 ${step}`} fill="none" stroke="#35474c" strokeWidth={unit} /></pattern></defs>
       <rect x={displayMinX - pad} y={-displayMaxZ - pad} width={viewWidth} height={viewHeight} fill="url(#grid)" />
-      <rect x={b.minX} y={-b.maxZ} width={width} height={depth} fill="#f0efff" stroke="#1b08ef" strokeWidth={unit * 2} />
-      <line x1={-unit * 8} y1="0" x2={unit * 8} y2="0" stroke="#1b08ef" strokeWidth={unit * 2} /><line x1="0" y1={-unit * 8} x2="0" y2={unit * 8} stroke="#1b08ef" strokeWidth={unit * 2} />
+      <rect x={b.minX} y={-b.maxZ} width={width} height={depth} fill="#172830" stroke="#e5eeeb" strokeWidth={unit * 2} />
+      <line x1={-unit * 8} y1="0" x2={unit * 8} y2="0" stroke="#e5eeeb" strokeWidth={unit * 2} /><line x1="0" y1={-unit * 8} x2="0" y2={unit * 8} stroke="#e5eeeb" strokeWidth={unit * 2} />
       {module.ports.map(port => <g key={port.id} onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); setActive(port.id) }} onDoubleClick={() => onDeletePort(port.id)} className="port-handle">
         <circle cx={port.x} cy={-port.z} r={unit * 15} fill="transparent" />
-        <circle cx={port.x} cy={-port.z} r={unit * 7} fill={active === port.id ? '#1100bb' : '#1b08ef'} stroke="#fff" strokeWidth={unit * 2} pointerEvents="none" />
-        <text transform={`translate(${port.x + unit * 10} ${-port.z - unit * 10}) scale(${labelScale})`} fill="#1100bb" fontSize={labelFontSize} paintOrder="stroke" stroke="#fff" strokeWidth={unit * 3 / labelScale} pointerEvents="none">{port.id}</text>
+        <circle cx={port.x} cy={-port.z} r={unit * 7} fill={active === port.id ? '#ffffff' : '#b8d9d7'} stroke="#071219" strokeWidth={unit * 2} pointerEvents="none" />
+        <text transform={`translate(${port.x + unit * 10} ${-port.z - unit * 10}) scale(${labelScale})`} fill="#f6faf8" fontSize={labelFontSize} paintOrder="stroke" stroke="#071219" strokeWidth={unit * 3 / labelScale} pointerEvents="none">{port.id}</text>
       </g>)}
     </svg><p className="hint">Drag a port along its edge. Double click to remove. The cross marks the model origin.</p>
   </div>
@@ -110,7 +110,7 @@ function PreviewCanvas({ project, result }: { project: RuntimeProject; result: P
     {result.placements.map((p, index) => { const b = boxes[index], color = typeMap.get(p.typeId)?.color ?? '#65b9d4'; return <g key={p.instanceId}>
       <rect x={b.minX} y={-b.maxZ} width={b.maxX - b.minX} height={b.maxZ - b.minZ} fill={color} fillOpacity="0.24" stroke={color} strokeWidth="110" />
       <circle cx={p.x} cy={-p.z} r="170" fill={color} />
-      <text x={(b.minX + b.maxX) / 2} y={-(b.minZ + b.maxZ) / 2} textAnchor="middle" dominantBaseline="middle" fill="#16133a" fontSize="900" stroke="#fff" strokeWidth="170" paintOrder="stroke">{p.moduleId}</text>
+      <text x={(b.minX + b.maxX) / 2} y={-(b.minZ + b.maxZ) / 2} textAnchor="middle" dominantBaseline="middle" fill="#f4f8f6" fontSize="900" stroke="#071219" strokeWidth="170" paintOrder="stroke">{p.moduleId}</text>
     </g> })}
   </svg>
 }
@@ -119,7 +119,10 @@ export default function App() {
   const [project, setProject] = useState<RuntimeProject>(emptyProject)
   const [editor, setEditor] = useState<EditorState>(emptyEditor)
   const [files, setFiles] = useState<Map<string, File>>(new Map())
-  const [tab, setTab] = useState<Tab>('global')
+  const [tab, setTab] = useState<Tab | null>(null)
+  const [navOpen, setNavOpen] = useState(true)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
   const [selectedType, setSelectedType] = useState('')
   const [selectedModule, setSelectedModule] = useState('')
   const [newTypeId, setNewTypeId] = useState('')
@@ -132,6 +135,7 @@ export default function App() {
   const [preview, setPreview] = useState<PreviewResult | null>(null)
   const [generating, setGenerating] = useState(false)
   const [notice, setNotice] = useState('')
+  const noticeIsError = /failed|error|invalid|resolve|enter a|shorter|already exists|no complete|10-second|stopped/i.test(notice)
   const workerRef = useRef<Worker | null>(null)
   const timeoutRef = useRef<number | null>(null)
   const projectInput = useRef<HTMLInputElement>(null)
@@ -148,8 +152,25 @@ export default function App() {
   const stopWorker = useCallback(() => { workerRef.current?.terminate(); workerRef.current = null; if (timeoutRef.current) window.clearTimeout(timeoutRef.current); timeoutRef.current = null; setGenerating(false) }, [])
   useEffect(() => () => { workerRef.current?.terminate(); if (timeoutRef.current) window.clearTimeout(timeoutRef.current) }, [])
   useEffect(() => { if (workerRef.current) stopWorker() }, [project, stopWorker])
+  useEffect(() => {
+    if (!notice || noticeIsError || notice.startsWith('Generating preview')) return
+    const timer = window.setTimeout(() => setNotice(''), 3800)
+    return () => window.clearTimeout(timer)
+  }, [notice, noticeIsError])
+  useEffect(() => {
+    if (!menuOpen) return
+    const onPointerDown = (event: PointerEvent) => { if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false) }
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') setMenuOpen(false) }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => { document.removeEventListener('pointerdown', onPointerDown); document.removeEventListener('keydown', onKeyDown) }
+  }, [menuOpen])
+  const selectTab = (next: Tab) => {
+    setTab(current => current === next ? null : next)
+    if (window.matchMedia('(max-width: 900px)').matches) setNavOpen(false)
+  }
   const load = (next: RuntimeProject, nextEditor = emptyEditor(), nextFiles = new Map<string, File>()) => {
-    stopWorker(); setProject(next); setEditor(nextEditor); setFiles(nextFiles); setPreview(null); setSelectedType(next.types[0]?.id ?? ''); setSelectedModule(next.modules[0]?.id ?? ''); setNotice('Project opened')
+    stopWorker(); setProject(next); setEditor(nextEditor); setFiles(nextFiles); setPreview(null); setSelectedType(next.types[0]?.id ?? ''); setSelectedModule(next.modules[0]?.id ?? ''); setTab('global'); if (window.matchMedia('(max-width: 900px)').matches) setNavOpen(false); setNotice('Project opened')
   }
   const addType = () => {
     const id = newTypeId.trim(), name = newTypeName.trim()
@@ -171,7 +192,7 @@ export default function App() {
     setSelectedModule(id); setNewModuleId('')
   }
   const removeModule = (id: string) => {
-    if (!window.confirm(`Delete module ${id}？`)) return
+    if (!window.confirm(`Delete module ${id}?`)) return
     mutate(draft => { draft.modules = draft.modules.filter(m => m.id !== id) })
     setFiles(current => { const next = new Map(current); next.delete(id); return next })
     setSelectedModule(project.modules.find(m => m.id !== id)?.id ?? '')
@@ -182,8 +203,8 @@ export default function App() {
     mutate(draft => draft.connections.push(canonicalConnection(a, b)))
   }
   const onConnect = (connection: FlowConnection) => addConnection(connection.source, connection.target)
-  const graphNodes: FlowNode[] = project.types.map((t, i) => ({ id: t.id, position: editor.graphPositions[t.id] ?? { x: (i % 3) * 240, y: Math.floor(i / 3) * 160 }, data: { label: `${t.name} · ${t.percent}%` }, style: { background: '#fff', color: '#16133a', border: `2px solid ${t.color}`, borderRadius: 2, padding: 14, width: 170 }, selected: selectedType === t.id }))
-  const graphEdges: FlowEdge[] = project.connections.map(c => ({ id: pairKey(c.a, c.b), source: c.a, target: c.b, label: c.a === c.b ? `${c.weightAB}` : `${c.weightAB} / ${c.weightBA}`, style: { stroke: '#1b08ef', strokeWidth: 1.5 }, labelStyle: { fill: '#1100bb', fontWeight: 700 }, labelBgStyle: { fill: '#fff' } }))
+  const graphNodes: FlowNode[] = project.types.map((t, i) => ({ id: t.id, position: editor.graphPositions[t.id] ?? { x: (i % 3) * 240, y: Math.floor(i / 3) * 160 }, data: { label: `${t.name} · ${t.percent}%` }, style: { background: '#1a2b33', color: '#f4f8f6', border: `2px solid ${t.color}`, borderRadius: 2, padding: 14, width: 170 }, selected: selectedType === t.id }))
+  const graphEdges: FlowEdge[] = project.connections.map(c => ({ id: pairKey(c.a, c.b), source: c.a, target: c.b, label: c.a === c.b ? `${c.weightAB}` : `${c.weightAB} / ${c.weightBA}`, style: { stroke: '#b8d9d7', strokeWidth: 1.5 }, labelStyle: { fill: '#f4f8f6', fontWeight: 700 }, labelBgStyle: { fill: '#172830' } }))
   const setBounds = (key: keyof Bounds, value: number) => {
     if (!module) return
     updateModule(module.id, m => {
@@ -234,17 +255,18 @@ export default function App() {
     } catch (error) { setNotice(`Import failed: ${errorText(error)}`) }
   }
 
-  return <div className="app-shell">
-    <header className="topbar"><div className="brand"><span className="brand-mark">▦</span><div><strong>Dungeon rule editor</strong><small>2D layout / FBX bounds / JSON rules</small></div></div>
-      <div className="top-actions"><button className="quiet" onClick={() => { if (!project.types.length || window.confirm('Replace the current project with the example?')) load(exampleProject()) }}>Load example</button><button className="quiet" onClick={() => projectInput.current?.click()}>Open ZIP</button><button className="quiet" onClick={() => jsonInput.current?.click()}>Import JSON</button><button className="quiet" onClick={() => saveProject(project, editor, files).then(() => setNotice('Project ZIP saved')).catch(e => setNotice(errorText(e)))}>Save ZIP</button><button className="primary" onClick={exportJson}>Export JSON</button></div>
+  return <div className={`app-shell ${navOpen ? 'nav-open' : 'nav-closed'}`}>
+    <header className="topbar"><div className="file-menu" ref={menuRef}><button className="menu-trigger" aria-expanded={menuOpen} aria-controls="file-menu-panel" onClick={() => setMenuOpen(open => !open)}>MENU <span aria-hidden="true">{menuOpen ? '×' : '☰'}</span></button>
+      {menuOpen && <div id="file-menu-panel" className="menu-panel"><div className="menu-caption">PROJECT FILES</div><button onClick={() => { setMenuOpen(false); if (!project.types.length || window.confirm('Replace the current project with the example?')) load(exampleProject()) }}>Load example</button><button onClick={() => { setMenuOpen(false); projectInput.current?.click() }}>Open ZIP</button><button onClick={() => { setMenuOpen(false); jsonInput.current?.click() }}>Import JSON</button><button onClick={() => { setMenuOpen(false); saveProject(project, editor, files).then(() => setNotice('Project ZIP saved')).catch(e => setNotice(errorText(e))) }}>Save ZIP</button><button onClick={() => { setMenuOpen(false); exportJson() }}>Export JSON</button><div className="menu-meta">{project.types.length} TYPES · {project.modules.length} MODULES<br />V1 · X-Z PLANE · 1 UNIT = 1 M<br />FILES STAY IN THIS BROWSER</div></div>}
+    </div>
       <input hidden type="file" accept=".zip" ref={projectInput} onChange={e => handleFile(e, 'project')} /><input hidden type="file" accept=".json" ref={jsonInput} onChange={e => handleFile(e, 'json')} /><input hidden type="file" accept=".fbx" ref={fbxInput} onChange={e => handleFile(e, 'fbx')} />
     </header>
-    <div className="workspace"><aside className="app-sidebar"><div className="side-heading">WORKSPACE</div>
-      <nav className="tabs" aria-label="Editor sections">{([['global', 'Map rules'], ['types', 'Types & links'], ['modules', 'Modules'], ['preview', 'Preview']] as const).map(([id, label], index) => <button key={id} className={tab === id ? 'active' : ''} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}><span className="step-number">0{index + 1}</span><span>{label}</span></button>)}</nav>
-      <div className="side-foot"><span>LOCAL WORKSPACE</span><strong>{project.types.length} types · {project.modules.length} modules</strong><small>Files stay in your browser.</small></div>
+    <div className="workspace"><aside className="app-sidebar"><button className="nav-toggle" aria-label={navOpen ? 'Collapse workspace navigation' : 'Expand workspace navigation'} aria-expanded={navOpen} onClick={() => setNavOpen(open => !open)}><span className="nav-chevron" aria-hidden="true">{navOpen ? '‹' : '›'}</span><span className="nav-toggle-label">WORKSPACE</span></button>
+      {navOpen && <><div className="nav-stripes" aria-hidden="true" /><nav className="tabs" aria-label="Editor sections">{([['global', 'Map rules'], ['types', 'Types & links'], ['modules', 'Modules'], ['preview', 'Preview']] as const).map(([id, label], index) => <button key={id} className={tab === id ? 'active' : ''} aria-current={tab === id ? 'page' : undefined} onClick={() => selectTab(id)}><span className="step-number">0{index + 1}</span><span>{label}</span></button>)}</nav></>}
     </aside><div className="workspace-main">
-    {notice && <div role="status" className="notice" onClick={() => setNotice('')}>{notice}<button title="Dismiss">×</button></div>}
-    <main className="content">
+    {notice && <div role={noticeIsError ? 'alert' : 'status'} className={`notice ${noticeIsError ? 'notice-error' : 'notice-success'}`}><span>{notice}</span><button aria-label="Dismiss notification" title="Dismiss" onClick={() => setNotice('')}>×</button></div>}
+    <main key={tab ?? 'home'} className="content">
+      {tab === null && <section className="home-screen" aria-label="Dungeon rule editor home"><div className="home-orbit" aria-hidden="true" /><div className="home-wordmark">DUNGEON <span>RULE EDITOR</span></div><p>BUILD THE RULES. SHAPE THE MAP.</p></section>}
       {tab === 'global' && <div className="page narrow"><div className="page-title"><div><span className="eyebrow">01 / MAP RULES</span><h1>Map rules</h1><p>Percentages set target counts; required counts are minimums.</p></div><span className="page-corner" aria-hidden="true">01</span></div>
         <section className="card"><h2>Map size</h2><div className="row three"><NumberField label="Total modules" value={project.settings.totalModules} min={1} max={500} onChange={n => mutate(d => { d.settings.totalModules = n })} /><Field label="Start type"><select value={project.settings.startTypeId} onChange={e => mutate(d => { d.settings.startTypeId = e.target.value })}><option value="">Select type</option>{project.types.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></Field><NumberField label="Door width" value={project.settings.doorWidth / 1000} min={0.001} step={0.001} suffix="m" onChange={n => mutate(d => { d.settings.doorWidth = toMm(n) })} /></div></section>
         <section className="card"><div className="section-head"><h2>Type targets</h2><span className={Math.abs(project.types.reduce((n, t) => n + t.percent, 0) - 100) < 0.000001 ? 'badge good' : 'badge warn'}>Total {project.types.reduce((n, t) => n + t.percent, 0)}%</span></div>
@@ -267,7 +289,7 @@ export default function App() {
       {tab === 'preview' && <div className="page preview-page"><div className="page-title"><div><span className="eyebrow">04 / GENERATION PREVIEW</span><h1>Map preview</h1><p>Rectangles use saved bounds. A seed reproduces the same layout.</p></div><div className="preview-controls"><Field label="Seed"><input type="number" min="0" max="4294967295" value={seed} onChange={e => setSeed(num(e.target.value) >>> 0)} /></Field><button className="quiet" onClick={() => setSeed(Math.floor(Math.random() * 4294967295))}>New seed</button><button className="primary" disabled={generating || !!errors.length} onClick={startPreview}>{generating ? 'Generating…' : 'Generate'}</button>{generating && <button onClick={() => { stopWorker(); setNotice('Search stopped') }}>Stop</button>}</div><span className="page-corner" aria-hidden="true">04</span></div>
         {errors.length > 0 && <Validation errors={errors} />}
         <div className="preview-layout"><section className="card preview-stage">{preview?.placements.length ? <PreviewCanvas project={project} result={preview} /> : <div className="placeholder"><span>◇</span><h2>No preview yet</h2><p>Create types, modules and links, then generate a preview.</p></div>}</section><aside className="card preview-info"><h2>Results</h2>{preview ? <><div className={`result-status ${preview.complete ? 'success' : 'warning'}`}>{preview.complete ? '✓ All targets met' : '⚠ Best partial result'}</div><div className="stats"><div><span>Placed</span><strong>{preview.placements.length} / {project.settings.totalModules}</strong></div><div><span>Seed</span><strong>{preview.seed}</strong></div><div><span>Candidates checked</span><strong>{preview.checks.toLocaleString()}</strong></div><div><span>Restarts</span><strong>{preview.restarts}</strong></div></div><h3>Type counts</h3>{project.types.map(t => <div className="quota-line" key={t.id}><span><i style={{ background: t.color }} />{t.name}</span><b>{preview.placements.filter(p => p.typeId === t.id).length} / {preview.targets[t.id] ?? 0}</b></div>)}{preview.warnings.length > 0 && <><h3>Warnings</h3><ul className="warnings">{preview.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></>}</> : <p className="empty">Generate a map to see counts and warnings.</p>}</aside></div></div>}
-    </main><footer>v1 · Files stay in this browser · X-Z plane · 1 unit = 1 meter</footer></div></div>
+    </main></div></div>
   </div>
 }
 
