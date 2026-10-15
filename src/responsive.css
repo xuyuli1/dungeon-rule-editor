@@ -1,6 +1,7 @@
 @media (max-width: 1180px) {
   .topbar { align-items: flex-start; flex-direction: column; }
   .top-actions { justify-content: flex-start; }
+  .preview-page .page-title { align-items: flex-start; flex-direction: column; }
   .preview-layout { grid-template-columns: 1fr; }
   .preview-info { min-height: 0; }
 }
@@ -11,6 +12,7 @@
   .tabs { width: 100%; flex-direction: row; gap: 3px; overflow-x: auto; }
   .tabs button { flex: 0 0 auto; width: auto; white-space: nowrap; padding: 10px 12px; }
   .page { padding: 24px 22px 35px; }
+  .page-title { min-height: 150px; }
   .notice { margin-inline: 22px; }
   .app-shell footer { padding-inline: 22px; }
 }
@@ -21,7 +23,10 @@
   .top-actions button { flex: 1 1 auto; }
   .top-actions .primary { margin-left: 0; }
   .page { padding: 22px 15px 30px; }
-  .page-title { align-items: flex-start; flex-direction: column; }
+  .page-title { align-items: flex-start; flex-direction: column; min-height: 0; padding: 20px 17px; }
+  .page-title h1 { font-size: clamp(42px, 12vw, 58px); }
+  .page-title p { padding-right: 48px; }
+  .page-corner { width: 42px; height: 42px; top: 12px; right: 12px; font-size: 19px; }
   .split-layout { display: block; }
   .row.three, .row.two, .row.four { grid-template-columns: 1fr; }
   .target-head, .target-row { grid-template-columns: 1.25fr .6fr .6fr .8fr; gap: 4px; font-size: 10px; }
