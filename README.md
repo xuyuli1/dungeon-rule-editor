@@ -21,7 +21,7 @@ npm run dev
 4. 输入随机种子并生成预览。未找到完整布局时查看偏差；未通过预览的规则仍可在确认告警后导出。
 5. “保存项目 ZIP”包含编辑数据和原始 FBX，可在另一台电脑重新打开；“导出运行时 JSON”只包含规则和几何，不含 FBX、颜色及界面位置。导入运行时 JSON 后可以继续编辑，但若需重算占地须重新选择 FBX。
 
-示例项目可以在首页点“加载示例”。示例只用于体验，没有 FBX 文件。运行时 JSON 结构见 [`schema/runtime-v1.schema.json`](schema/runtime-v1.schema.json)，生成细节见 [`ALGORITHM.md`](ALGORITHM.md)。
+示例项目可从右上角 MENU 中选择 Load example。示例只用于体验，没有 FBX 文件。运行时 JSON 结构见 [`schema/runtime-v1.schema.json`](schema/runtime-v1.schema.json)，生成细节见 [`ALGORITHM.md`](ALGORITHM.md)。
 
 ## FBX 与 Unity 尺寸
 
