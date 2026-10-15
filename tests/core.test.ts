@@ -10,7 +10,7 @@ describe('rules and geometry', () => {
     expect(fbxMetersPerUnit(1)).toBe(0.01)
     expect(fbxMetersPerUnit(100)).toBe(1)
     expect(fbxMetersPerUnit(undefined)).toBe(0.01)
-    expect(() => fbxMetersPerUnit(0)).toThrow('FBX 文件单位无效')
+    expect(() => fbxMetersPerUnit(0)).toThrow('Invalid FBX unit scale')
     const before = { minX: -2050000, maxX: 2050000, minZ: -2050000, maxZ: 2050000 }
     const after = { minX: -20500, maxX: 20500, minZ: -20500, maxZ: 20500 }
     expect(remapPorts([{ id: 'door', edge: 'N', x: 1025000, z: 2050000 }], before, after, 2000))
@@ -32,7 +32,7 @@ describe('rules and geometry', () => {
     p.types[2].percent = 30
     expect(typeTargets(p)).toEqual({ entrance: 8, basic: 1, special: 4 })
     p.types[0].requiredMin = 9
-    expect(validateProject(p).some(e => e.includes('超过比例目标'))).toBe(true)
+    expect(validateProject(p).some(e => e.includes('exceeds its target'))).toBe(true)
   })
   it('rotates coordinates and accepts touching but not overlapping rectangles', () => {
     expect(rotate({ x: 2, z: 3 }, 1)).toEqual({ x: 3, z: -2 })
@@ -70,7 +70,7 @@ describe('rules and geometry', () => {
     p.connections = [canonicalConnection('entrance', 'basic')]
     const result = generate(p, 12, undefined, 3000, 3)
     expect(result.complete).toBe(false)
-    expect(result.warnings.some(w => w.includes('特殊'))).toBe(true)
+    expect(result.warnings.some(w => w.includes('Special'))).toBe(true)
   })
   it('separates editor display fields from the runtime JSON and imports it again', () => {
     const p = exampleProject()

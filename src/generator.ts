@@ -64,9 +64,9 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
     const counts: Record<string, number> = {}
     placements.forEach(p => { counts[p.typeId] = (counts[p.typeId] ?? 0) + 1 })
     const warnings = complete ? [] : [
-      `已放置 ${placements.length}/${project.settings.totalModules} 个模块`,
-      ...project.types.filter(t => (counts[t.id] ?? 0) < t.requiredMin).map(t => `${t.name} 必出至少 ${t.requiredMin}，当前 ${counts[t.id] ?? 0}`),
-      ...project.types.filter(t => (counts[t.id] ?? 0) !== targets[t.id]).map(t => `${t.name} 目标 ${targets[t.id]}，当前 ${counts[t.id] ?? 0}`),
+      `Placed ${placements.length}/${project.settings.totalModules} modules`,
+      ...project.types.filter(t => (counts[t.id] ?? 0) < t.requiredMin).map(t => `${t.name}: required at least ${t.requiredMin}, placed ${counts[t.id] ?? 0}`),
+      ...project.types.filter(t => (counts[t.id] ?? 0) !== targets[t.id]).map(t => `${t.name}: target ${targets[t.id]}, placed ${counts[t.id] ?? 0}`),
     ]
     return { placements: placements.map(p => ({ ...p, parent: p.parent ? { ...p.parent } : undefined })), complete, seed: seed >>> 0, checks, restarts, targets, warnings }
   }

@@ -62,83 +62,83 @@ const finite = (value: number) => Number.isFinite(value)
 const integer = (value: number) => Number.isInteger(value)
 export function validateProject(project: RuntimeProject): string[] {
   const errors: string[] = []
-  if (project.schemaVersion !== SCHEMA_VERSION) errors.push(`不支持的数据版本 ${project.schemaVersion}`)
+  if (project.schemaVersion !== SCHEMA_VERSION) errors.push(`Unsupported data version ${project.schemaVersion}`)
   const { totalModules, startTypeId, doorWidth } = project.settings
-  if (!integer(totalModules) || totalModules < 1 || totalModules > 500) errors.push('模块总数须为 1–500 的整数')
-  if (!integer(doorWidth) || doorWidth <= 0) errors.push('门洞宽度须大于 0')
-  if (!project.types.length) errors.push('至少需要一个类型')
+  if (!integer(totalModules) || totalModules < 1 || totalModules > 500) errors.push('Total modules must be an integer from 1 to 500')
+  if (!integer(doorWidth) || doorWidth <= 0) errors.push('Door width must be greater than zero')
+  if (!project.types.length) errors.push('Add at least one type')
   const typeIds = new Set<string>()
   for (const type of project.types) {
-    if (!isId(type.id)) errors.push(`类型 ID ${type.id || '（空）'} 无效：须以英文字母开头，仅使用字母、数字、_、-`)
-    if (typeIds.has(type.id)) errors.push(`类型 ID 重复：${type.id}`)
+    if (!isId(type.id)) errors.push(`Invalid type ID ${type.id || '(empty)'}: start with a letter; use letters, numbers, _ or -`)
+    if (typeIds.has(type.id)) errors.push(`Duplicate type ID: ${type.id}`)
     typeIds.add(type.id)
-    if (!type.name.trim()) errors.push(`类型 ${type.id} 缺少名称`)
-    if (!/^#[0-9a-fA-F]{6}$/.test(type.color)) errors.push(`类型 ${type.id} 的颜色无效`)
-    if (!finite(type.percent) || type.percent < 0 || type.percent > 100) errors.push(`类型 ${type.id} 的比例须为 0–100%`)
-    if (!integer(type.requiredMin) || type.requiredMin < 0) errors.push(`类型 ${type.id} 的必出数量无效`)
-    for (const [label, rule] of [['物品', type.items], ['敌人', type.enemies]] as const) {
-      if (!integer(rule.min) || !integer(rule.max) || rule.min < 0 || rule.max < rule.min) errors.push(`${type.name} 的${label}数量范围无效`)
-      if (rule.max > 0 && !rule.entries.length) errors.push(`${type.name} 需要至少一个${label} ID`)
+    if (!type.name.trim()) errors.push(`Type ${type.id} needs a name`)
+    if (!/^#[0-9a-fA-F]{6}$/.test(type.color)) errors.push(`Type ${type.id} has an invalid color`)
+    if (!finite(type.percent) || type.percent < 0 || type.percent > 100) errors.push(`Type ${type.id} share must be 0–100%`)
+    if (!integer(type.requiredMin) || type.requiredMin < 0) errors.push(`Type ${type.id} has an invalid required minimum`)
+    for (const [label, rule] of [['item', type.items], ['enemy', type.enemies]] as const) {
+      if (!integer(rule.min) || !integer(rule.max) || rule.min < 0 || rule.max < rule.min) errors.push(`${type.name} has an invalid ${label} count range`)
+      if (rule.max > 0 && !rule.entries.length) errors.push(`${type.name} needs at least one ${label} ID`)
       const seen = new Set<string>()
       for (const entry of rule.entries) {
-        if (!entry.id.trim() || seen.has(entry.id)) errors.push(`${type.name} 的${label} ID 为空或重复`)
+        if (!entry.id.trim() || seen.has(entry.id)) errors.push(`${type.name} has an empty or duplicate ${label} ID`)
         seen.add(entry.id)
-        if (!finite(entry.weight) || entry.weight <= 0) errors.push(`${type.name} 的${label}权重须大于 0`)
+        if (!finite(entry.weight) || entry.weight <= 0) errors.push(`${type.name} ${label} weight must be greater than zero`)
       }
     }
   }
-  if (Math.abs(project.types.reduce((sum, t) => sum + t.percent, 0) - 100) > 0.000001) errors.push('类型比例合计必须为 100%')
-  if (!typeIds.has(startTypeId)) errors.push('请选择有效的起始类型')
+  if (Math.abs(project.types.reduce((sum, t) => sum + t.percent, 0) - 100) > 0.000001) errors.push('Type shares must total 100%')
+  if (!typeIds.has(startTypeId)) errors.push('Select a valid start type')
   const targets = typeTargets(project)
-  for (const type of project.types) if (type.requiredMin > (targets[type.id] ?? 0)) errors.push(`${type.name} 必出 ${type.requiredMin} 个，超过比例目标 ${targets[type.id] ?? 0} 个`)
-  if (startTypeId && (targets[startTypeId] ?? 0) < 1) errors.push('起始类型的目标数量至少为 1')
+  for (const type of project.types) if (type.requiredMin > (targets[type.id] ?? 0)) errors.push(`${type.name} required minimum ${type.requiredMin} exceeds its target ${targets[type.id] ?? 0}`)
+  if (startTypeId && (targets[startTypeId] ?? 0) < 1) errors.push('Start type needs at least one target slot')
   const moduleIds = new Set<string>()
   const modulesByType = new Map<string, number>()
   for (const module of project.modules) {
-    if (!isId(module.id)) errors.push(`模块 ID ${module.id || '（空）'} 无效`)
-    if (moduleIds.has(module.id)) errors.push(`模块 ID 重复：${module.id}`)
+    if (!isId(module.id)) errors.push(`Invalid module ID: ${module.id || '(empty)'}`)
+    if (moduleIds.has(module.id)) errors.push(`Duplicate module ID: ${module.id}`)
     moduleIds.add(module.id)
-    if (!typeIds.has(module.typeId)) errors.push(`模块 ${module.id} 引用了不存在的类型`)
+    if (!typeIds.has(module.typeId)) errors.push(`Module ${module.id} references a missing type`)
     modulesByType.set(module.typeId, (modulesByType.get(module.typeId) ?? 0) + 1)
     const b = module.bounds
-    if (![b.minX, b.maxX, b.minZ, b.maxZ].every(integer) || b.minX >= b.maxX || b.minZ >= b.maxZ) errors.push(`模块 ${module.id} 的占地边界无效`)
+    if (![b.minX, b.maxX, b.minZ, b.maxZ].every(integer) || b.minX >= b.maxX || b.minZ >= b.maxZ) errors.push(`Module ${module.id} has invalid bounds`)
     const portIds = new Set<string>()
     for (const port of module.ports) {
-      if (!isId(port.id) || portIds.has(port.id)) errors.push(`模块 ${module.id} 的接口 ID 为空、无效或重复`)
+      if (!isId(port.id) || portIds.has(port.id)) errors.push(`Module ${module.id} has an empty, invalid or duplicate port ID`)
       portIds.add(port.id)
-      if (!['N', 'E', 'S', 'W'].includes(port.edge) || !integer(port.x) || !integer(port.z)) errors.push(`模块 ${module.id} 的接口 ${port.id} 无效`)
+      if (!['N', 'E', 'S', 'W'].includes(port.edge) || !integer(port.x) || !integer(port.z)) errors.push(`Module ${module.id} has an invalid port ${port.id}`)
       const half = doorWidth / 2
       const valid = port.edge === 'N' ? port.z === b.maxZ && port.x >= b.minX + half && port.x <= b.maxX - half
         : port.edge === 'S' ? port.z === b.minZ && port.x >= b.minX + half && port.x <= b.maxX - half
           : port.edge === 'E' ? port.x === b.maxX && port.z >= b.minZ + half && port.z <= b.maxZ - half
             : port.x === b.minX && port.z >= b.minZ + half && port.z <= b.maxZ - half
-      if (!valid) errors.push(`模块 ${module.id} 的接口 ${port.id} 超出边缘或未贴边`)
+      if (!valid) errors.push(`Port ${port.id} on module ${module.id} is off its edge or outside the bounds`)
     }
   }
-  for (const type of project.types) if ((targets[type.id] ?? 0) > 0 && !modulesByType.has(type.id)) errors.push(`类型 ${type.name} 有生成名额但没有模块`)
+  for (const type of project.types) if ((targets[type.id] ?? 0) > 0 && !modulesByType.has(type.id)) errors.push(`Type ${type.name} has target slots but no modules`)
   const relationKeys = new Set<string>()
   for (const c of project.connections) {
-    if (!typeIds.has(c.a) || !typeIds.has(c.b)) errors.push('连接关系引用了不存在的类型')
-    if (c.a > c.b || relationKeys.has(pairKey(c.a, c.b))) errors.push('连接关系重复或未按 ID 排序')
+    if (!typeIds.has(c.a) || !typeIds.has(c.b)) errors.push('A connection references a missing type')
+    if (c.a > c.b || relationKeys.has(pairKey(c.a, c.b))) errors.push('Duplicate or unsorted connection')
     relationKeys.add(pairKey(c.a, c.b))
-    if (![c.weightAB, c.weightBA].every(v => finite(v) && v > 0)) errors.push('连接权重须大于 0')
+    if (![c.weightAB, c.weightBA].every(v => finite(v) && v > 0)) errors.push('Connection weights must be greater than zero')
   }
   return errors
 }
 
 function object(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value) }
 export function parseRuntime(value: unknown): RuntimeProject {
-  if (!object(value) || value.schemaVersion !== SCHEMA_VERSION || !object(value.settings) || !Array.isArray(value.types) || !Array.isArray(value.modules) || !Array.isArray(value.connections)) throw new Error('JSON 结构或版本不正确')
+  if (!object(value) || value.schemaVersion !== SCHEMA_VERSION || !object(value.settings) || !Array.isArray(value.types) || !Array.isArray(value.modules) || !Array.isArray(value.connections)) throw new Error('Invalid JSON structure or version')
   const project = value as RuntimeProject
-  if (typeof project.settings.totalModules !== 'number' || typeof project.settings.startTypeId !== 'string' || typeof project.settings.doorWidth !== 'number') throw new Error('地图设置格式不正确')
+  if (typeof project.settings.totalModules !== 'number' || typeof project.settings.startTypeId !== 'string' || typeof project.settings.doorWidth !== 'number') throw new Error('Invalid map settings')
   for (const [index, t] of project.types.entries()) {
-    if (!object(t) || typeof t.id !== 'string' || typeof t.percent !== 'number' || typeof t.requiredMin !== 'number') throw new Error('类型格式不正确')
+    if (!object(t) || typeof t.id !== 'string' || typeof t.percent !== 'number' || typeof t.requiredMin !== 'number') throw new Error('Invalid type data')
     if (typeof t.name !== 'string') t.name = t.id
     if (typeof t.color !== 'string') t.color = ['#65b9d4', '#c987f0', '#efb565', '#83caa0', '#d58a9b'][index % 5]
-    for (const rule of [t.items, t.enemies]) if (!object(rule) || typeof rule.min !== 'number' || typeof rule.max !== 'number' || !Array.isArray(rule.entries) || rule.entries.some((e: SpawnEntry) => !object(e) || typeof e.id !== 'string' || typeof e.weight !== 'number')) throw new Error('内部生成规则格式不正确')
+    for (const rule of [t.items, t.enemies]) if (!object(rule) || typeof rule.min !== 'number' || typeof rule.max !== 'number' || !Array.isArray(rule.entries) || rule.entries.some((e: SpawnEntry) => !object(e) || typeof e.id !== 'string' || typeof e.weight !== 'number')) throw new Error('Invalid spawn rule')
   }
-  for (const m of project.modules) if (!object(m) || typeof m.id !== 'string' || typeof m.typeId !== 'string' || !object(m.bounds) || ['minX', 'maxX', 'minZ', 'maxZ'].some(k => typeof m.bounds[k as keyof Bounds] !== 'number') || !Array.isArray(m.ports) || m.ports.some((p: Port) => !object(p) || typeof p.id !== 'string' || typeof p.edge !== 'string' || typeof p.x !== 'number' || typeof p.z !== 'number')) throw new Error('模块格式不正确')
-  for (const c of project.connections) if (!object(c) || typeof c.a !== 'string' || typeof c.b !== 'string' || typeof c.weightAB !== 'number' || typeof c.weightBA !== 'number') throw new Error('连接格式不正确')
+  for (const m of project.modules) if (!object(m) || typeof m.id !== 'string' || typeof m.typeId !== 'string' || !object(m.bounds) || ['minX', 'maxX', 'minZ', 'maxZ'].some(k => typeof m.bounds[k as keyof Bounds] !== 'number') || !Array.isArray(m.ports) || m.ports.some((p: Port) => !object(p) || typeof p.id !== 'string' || typeof p.edge !== 'string' || typeof p.x !== 'number' || typeof p.z !== 'number')) throw new Error('Invalid module data')
+  for (const c of project.connections) if (!object(c) || typeof c.a !== 'string' || typeof c.b !== 'string' || typeof c.weightAB !== 'number' || typeof c.weightBA !== 'number') throw new Error('Invalid connection data')
   return project
 }
 
@@ -160,7 +160,7 @@ export function exampleProject(): RuntimeProject {
   return {
     schemaVersion: SCHEMA_VERSION,
     settings: { totalModules: 10, startTypeId: 'entrance', doorWidth: 2000 },
-    types: [type('entrance', '入口', '#c987f0', 20, 1), type('basic', '基础', '#65b9d4', 60, 0), type('special', '特殊', '#efb565', 20, 0)],
+    types: [type('entrance', 'Entrance', '#c987f0', 20, 1), type('basic', 'Basic', '#65b9d4', 60, 0), type('special', 'Special', '#efb565', 20, 0)],
     modules: [{ id: 'entry_a', typeId: 'entrance', bounds: { ...bounds }, ports: ports() }, { id: 'room_a', typeId: 'basic', bounds: { ...bounds }, ports: ports() }, { id: 'room_b', typeId: 'basic', bounds: { ...bounds }, ports: ports() }, { id: 'special_a', typeId: 'special', bounds: { ...bounds }, ports: ports() }],
     connections: [canonicalConnection('entrance', 'basic', 3, 3), canonicalConnection('basic', 'basic', 2, 2), canonicalConnection('basic', 'special', 1, 1)],
   }

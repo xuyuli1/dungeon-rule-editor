@@ -18,19 +18,19 @@ export async function readJson(file: File): Promise<RuntimeProject> {
 }
 export function fbxMetersPerUnit(unitScaleFactor: unknown): number {
   if (unitScaleFactor === undefined) return 0.01 // FBX defaults to centimetres.
-  if (typeof unitScaleFactor !== 'number' || !Number.isFinite(unitScaleFactor) || unitScaleFactor <= 0) throw new Error('FBX 文件单位无效')
+  if (typeof unitScaleFactor !== 'number' || !Number.isFinite(unitScaleFactor) || unitScaleFactor <= 0) throw new Error('Invalid FBX unit scale')
   return unitScaleFactor / 100 // FBX UnitScaleFactor is centimetres per file unit.
 }
 export async function importFbx(file: File): Promise<Bounds> {
-  if (!file.name.toLowerCase().endsWith('.fbx')) throw new Error('第一版只支持 .fbx 文件')
+  if (!file.name.toLowerCase().endsWith('.fbx')) throw new Error('Only .fbx files are supported')
   const [{ Box3 }, { FBXLoader }] = await Promise.all([import('three'), import('three/addons/loaders/FBXLoader.js')])
   const model = new FBXLoader().parse(await file.arrayBuffer(), '')
   const metersPerUnit = fbxMetersPerUnit(model.userData.unitScaleFactor)
   model.updateWorldMatrix(true, true)
   const box = new Box3().setFromObject(model, true)
-  if (box.isEmpty() || !Number.isFinite(box.min.x) || !Number.isFinite(box.max.z)) throw new Error('未找到有效的模型网格')
+  if (box.isEmpty() || !Number.isFinite(box.min.x) || !Number.isFinite(box.max.z)) throw new Error('No valid mesh found in the model')
   const bounds = { minX: toMm(box.min.x * metersPerUnit), maxX: toMm(box.max.x * metersPerUnit), minZ: toMm(box.min.z * metersPerUnit), maxZ: toMm(box.max.z * metersPerUnit) }
-  if (bounds.minX >= bounds.maxX || bounds.minZ >= bounds.maxZ) throw new Error('模型在 X-Z 平面上的占地为零')
+  if (bounds.minX >= bounds.maxX || bounds.minZ >= bounds.maxZ) throw new Error('Model has no X-Z footprint')
   return bounds
 }
 type SavedProject = { format: 'dungeon-editor-project'; version: 1; runtime: RuntimeProject; editor: EditorState; assets: Record<string, string> }
@@ -55,20 +55,20 @@ export async function openProject(file: File): Promise<{ project: RuntimeProject
   const { default: JSZip } = await import('jszip')
   const zip = await JSZip.loadAsync(file)
   const manifest = zip.file('project.json')
-  if (!manifest) throw new Error('压缩包中缺少 project.json')
+  if (!manifest) throw new Error('project.json is missing from the ZIP')
   const raw: unknown = JSON.parse(await manifest.async('text'))
-  if (!raw || typeof raw !== 'object') throw new Error('项目格式不正确')
+  if (!raw || typeof raw !== 'object') throw new Error('Invalid project format')
   const saved = raw as SavedProject
-  if (saved.format !== 'dungeon-editor-project' || saved.version !== 1) throw new Error('不支持的项目版本')
+  if (saved.format !== 'dungeon-editor-project' || saved.version !== 1) throw new Error('Unsupported project version')
   const project = parseRuntime(saved.runtime)
-  if (project.schemaVersion !== SCHEMA_VERSION) throw new Error('运行时 JSON 版本不匹配')
+  if (project.schemaVersion !== SCHEMA_VERSION) throw new Error('Runtime JSON version mismatch')
   const editor = saved.editor && typeof saved.editor === 'object' ? saved.editor : emptyEditor()
-  if (!editor.graphPositions || !editor.modelNames) throw new Error('编辑器数据不完整')
+  if (!editor.graphPositions || !editor.modelNames) throw new Error('Incomplete editor data')
   const files = new Map<string, File>()
   for (const [id, path] of Object.entries(saved.assets ?? {})) {
-    if (!project.modules.some(m => m.id === id) || !/^assets\/[A-Za-z][A-Za-z0-9_-]*\.fbx$/.test(path)) throw new Error('项目资源路径无效')
+    if (!project.modules.some(m => m.id === id) || !/^assets\/[A-Za-z][A-Za-z0-9_-]*\.fbx$/.test(path)) throw new Error('Invalid project asset path')
     const entry = zip.file(path)
-    if (!entry) throw new Error(`缺少模型文件 ${path}`)
+    if (!entry) throw new Error(`Missing model file ${path}`)
     files.set(id, new File([await entry.async('blob')], editor.modelNames[id] || `${id}.fbx`, { type: 'application/octet-stream' }))
   }
   return { project, editor, files }
