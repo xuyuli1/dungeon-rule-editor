@@ -1,41 +1,32 @@
-# 随机副本规则编辑器
+# Dungeon Rule Editor
 
-浏览器中的 2D 规则编辑器。读取 FBX 计算模块 X-Z 占地；配置类型、连接口、相对权重和内部生成规则；生成地图预览；保存项目 ZIP 或导出运行时 JSON。文件均在本机浏览器处理，不上传。
+A local-first browser editor for modular 3D map rules. Import FBX files to calculate X/Y/Z occupancy boxes, define rectangular side connectors, edit directed type relationships, and preview generated maps. The editor processes files in the browser; it does not upload models or generate a Unity scene.
 
-## 本地运行
+## Run locally
 
-安装 **Node.js 24** 后，在本目录执行：
+Use Node.js 24 or newer:
 
 ```bash
 npm ci
 npm run dev
 ```
 
-打开终端显示的本地网址。Windows 和 macOS 使用相同源码及项目 ZIP。`npm run build` 生成 `dist/` 静态网页；`npm run preview` 可在本地查看发布版。
+`npm test` runs the rule tests, and `npm run build` creates the static site in `dist/`. The project can run on macOS and Windows browsers and deploy to GitHub Pages using the included workflow.
 
-## 使用流程
+## Workflow
 
-1. 左侧 Rule network 中设置起点之后的模块数、起始类型和统一门洞宽度。在图上空白处右键或点 `⋯`，选择 New type；输入唯一类型 ID。非起点类型的比例合计须为 100%。
-2. 单击节点突出相邻连接，双击打开可拖动的类型窗口。节点右键菜单可编辑、删除或新建连接；新建连接时点击目标节点，点击自身可建立自连接，Esc 取消。每条箭头上的数字是该方向的相对权重；反向连接需单独建立，点击线或数字可编辑，右键只删除这一方向。空白处菜单中的 Arrange 整理节点位置。
-3. 类型节点中的两列插槽显示各模块占地及接口。点击 Add module 选择或拖入 FBX；文件名决定模块 ID。单击模块插槽打开独立窗口，可更换 FBX、调整占地、在画布边界放置或拖动接口、填写接口坐标与许可类型，并配置该模块的物品和敌人。
-4. 右侧输入随机种子并生成预览。滚轮缩放、拖拽平移、Fit 复位；圆点和三角形分别表示抽到的物品和敌人；实线门表示未连接接口，虚线门表示已连接接口。示意位置不导出。未找到完整布局时查看偏差；未通过预览的规则仍可在确认告警后导出。
-5. 当前项目自动保存到浏览器 IndexedDB，刷新后恢复规则、FBX、种子、图布局和窗口；顶部显示 Saving/Saved。左上角菜单可新建项目、另存 ZIP、重新打开 ZIP，以及导入或导出运行时 JSON。ZIP 包含编辑数据和原始 FBX；JSON 只包含规则和几何，不含 FBX、颜色及界面位置。
+1. Set the number of modules after the unique start, the start type, and the project-wide connector width and height. Both connector dimensions default to 1 m.
+2. Right-click the type graph background to create or arrange types. Right-click a type to edit, connect, or delete it. Relations are directed; the number on each arrow is its relative generation weight.
+3. Add an FBX to a type's module slots. Its filename becomes the module ID. The editor computes the model's three-dimensional bounds relative to its origin. Use the collapsed Advanced bounds section only when the occupancy box needs correction.
+4. Open the module window to place and drag rectangular ports on the sides of the 3D box, or enter precise local X/Y/Z coordinates. A connector must fit completely within one vertical side face. Set per-port target-type permissions if needed.
+5. Generate a map from a visible seed. Both the module editor and the preview support mouse orbit, middle or right drag pan, wheel zoom, Fit, and **F** to focus. The 3D preview uses colored boxes rather than rendering FBX. Connected connectors have an empty solid outline; unused connectors have a solid hatched outline and do not cause warnings.
 
-示例项目可从左上角图标菜单中选择 Load example。示例只用于体验，没有 FBX 文件。运行时 JSON 结构见 [`schema/runtime-v3.schema.json`](schema/runtime-v3.schema.json)，生成细节见 [`ALGORITHM.md`](ALGORITHM.md)。v2 及更早文件不支持导入；升级时清除旧版浏览器草稿。
+Projects autosave locally in IndexedDB. The file menu can save and reopen ZIP projects with original FBX files, or import and export runtime JSON without models and editor layout. Runtime JSON and ZIP use v4; v3 and older files are not migrated. Their schemas and generation behavior are documented in [`schema/runtime-v4.schema.json`](schema/runtime-v4.schema.json) and [`ALGORITHM.md`](ALGORITHM.md).
 
-## FBX 与 Unity 尺寸
+## Unity agreement
 
-第一版只支持 FBX。编辑器读取 FBX 的 `UnitScaleFactor`，将文件坐标换算为米，再计算相对模型原点的 X-Z 占地边界并四舍五入到毫米。例如文件单位为厘米时，原始宽度 4100 会显示为 41.000 m。Unity 应按 FBX 文件单位导入，导入缩放及场景中模块的 Transform Scale 均为 1。装饰物、突出屋檐等也可能扩大自动边界，可在编辑器中手动微调。首次使用真实资源时，请在 Unity 中对照同一 FBX 的包围尺寸和原点；不同导入设置会造成偏差。修复前曾导入并保存过错误尺寸的项目，需要重新导入相应 FBX。
+The editor converts FBX `UnitScaleFactor` to metres and stores geometry in integer millimetres. Keep the imported prefab's root and scene scale at 1, and align Unity's X/Y/Z and 90° Y-axis rotations with the exported data. The occupancy box is a placement approximation; Unity performs actual scene collision and instantiation. Bridge, stair, room, and corridor geometry are ordinary modules. Unity can create doors at connected ports and seal unused ones.
 
-## GitHub Pages 发布
+## Publishing
 
-将本目录作为**公开 GitHub 仓库的根目录**推送到 `main`。在仓库 Settings → Pages 中选择 **GitHub Actions** 作为来源。仓库内的 [部署工作流](.github/workflows/deploy.yml) 会运行测试、构建并发布 `dist/`。项目 ZIP、FBX 和个人规则文件不要提交到仓库。代码使用相对资源路径，可部署在 GitHub Pages 的项目路径下。
-
-## 验证
-
-```bash
-npm test
-npm run build
-```
-
-测试覆盖比例取整、必出冲突、坐标旋转、防重叠、固定种子、残缺地图告警、运行时 JSON 分离、项目 ZIP 内容、FBX 文件单位换算、接口位置映射和画布像素尺寸。已用项目中的 Rooftop.fbx 在浏览器验证 4100 文件单位对应 41.000 m；其他 FBX 和 Unity 导入设置仍建议逐一对照。跨平台发布检查仍需在 Windows 和 macOS 浏览器各走一遍导入与导出流程。
+Push this directory as a public repository root. In GitHub Settings → Pages choose **GitHub Actions**. The included workflow tests, builds, and publishes the static site. Keep project ZIPs, FBX assets, and personal rules out of the source repository.

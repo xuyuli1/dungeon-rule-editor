@@ -1,10 +1,9 @@
-import { compareId, type Bounds, type Edge, type Module, type Point, type RuntimeProject, type Port, type SpawnRule, typeTargets, validateProject, weightFor } from './model'
+import { compareId, type Bounds, type Edge, type Module, type Point, type RuntimeProject, type Port, typeTargets, validateProject, weightFor } from './model'
 
-export type Placement = { instanceId: string; moduleId: string; typeId: string; x: number; z: number; rotation: 0 | 1 | 2 | 3; parent?: { instanceId: string; parentPortId: string; ownPortId: string } }
-export type SpawnMarker = { instanceId: string; kind: 'item' | 'enemy'; id: string; x: number; z: number }
-export type PreviewDoor = { instanceId: string; portId: string; connected: boolean; x1: number; z1: number; x2: number; z2: number }
-export type PreviewResult = { placements: Placement[]; markers: SpawnMarker[]; complete: boolean; seed: number; checks: number; restarts: number; targets: Record<string, number>; warnings: string[] }
-type Candidate = { parentIndex: number; parentPort: Port; child: Module; childPort: Port; rotation: 0 | 1 | 2 | 3; x: number; z: number; rank: number }
+export type Placement = { instanceId: string; moduleId: string; typeId: string; x: number; y: number; z: number; rotation: 0 | 1 | 2 | 3; parent?: { instanceId: string; parentPortId: string; ownPortId: string } }
+export type PreviewDoor = { instanceId: string; portId: string; connected: boolean; edge: Edge; x: number; y: number; z: number; width: number; height: number }
+export type PreviewResult = { placements: Placement[]; complete: boolean; seed: number; checks: number; restarts: number; targets: Record<string, number>; warnings: string[] }
+type Candidate = { parentIndex: number; parentPort: Port; child: Module; childPort: Port; rotation: 0 | 1 | 2 | 3; x: number; y: number; z: number; rank: number }
 type Progress = (result: PreviewResult) => void
 
 export class XorShift32 {
@@ -28,12 +27,12 @@ export function rotate(point: Point, quarterTurns: number): Point {
     default: return { x: point.x, z: point.z }
   }
 }
-export function rotatedBounds(bounds: Bounds, rotation: number, x = 0, z = 0): Bounds {
+export function rotatedBounds(bounds: Bounds, rotation: number, x = 0, y = 0, z = 0): Bounds {
   const corners = [
     rotate({ x: bounds.minX, z: bounds.minZ }, rotation), rotate({ x: bounds.minX, z: bounds.maxZ }, rotation),
     rotate({ x: bounds.maxX, z: bounds.minZ }, rotation), rotate({ x: bounds.maxX, z: bounds.maxZ }, rotation),
   ]
-  return { minX: Math.min(...corners.map(p => p.x)) + x, maxX: Math.max(...corners.map(p => p.x)) + x, minZ: Math.min(...corners.map(p => p.z)) + z, maxZ: Math.max(...corners.map(p => p.z)) + z }
+  return { minX: Math.min(...corners.map(p => p.x)) + x, maxX: Math.max(...corners.map(p => p.x)) + x, minY: bounds.minY + y, maxY: bounds.maxY + y, minZ: Math.min(...corners.map(p => p.z)) + z, maxZ: Math.max(...corners.map(p => p.z)) + z }
 }
 export function previewDoors(project: RuntimeProject, placements: Placement[]): PreviewDoor[] {
   const modules = new Map(project.modules.map(module => [module.id, module]))
@@ -54,55 +53,21 @@ export function previewDoors(project: RuntimeProject, placements: Placement[]): 
       const portKey = key(placement.instanceId, port.id)
       if (used.has(portKey) && !childDoors.has(portKey)) continue
       const center = rotate(port, placement.rotation)
-      const tangent = rotate(port.edge === 'N' || port.edge === 'S' ? { x: 1, z: 0 } : { x: 0, z: 1 }, placement.rotation)
-      const half = project.settings.doorWidth / 2
-      doors.push({ instanceId: placement.instanceId, portId: port.id, connected: childDoors.has(portKey),
-        x1: placement.x + center.x - tangent.x * half, z1: placement.z + center.z - tangent.z * half,
-        x2: placement.x + center.x + tangent.x * half, z2: placement.z + center.z + tangent.z * half })
+      const direction = rotate(normal(port.edge), placement.rotation)
+      const edge: Edge = direction.z > 0 ? 'N' : direction.x > 0 ? 'E' : direction.z < 0 ? 'S' : 'W'
+      doors.push({ instanceId: placement.instanceId, portId: port.id, connected: childDoors.has(portKey), edge,
+        x: placement.x + center.x, y: placement.y + port.y, z: placement.z + center.z,
+        width: project.settings.doorWidth, height: project.settings.doorHeight })
     }
   }
   return doors
 }
 export function overlaps(a: Bounds, b: Bounds): boolean {
-  return Math.min(a.maxX, b.maxX) > Math.max(a.minX, b.minX) && Math.min(a.maxZ, b.maxZ) > Math.max(a.minZ, b.minZ)
+  return Math.min(a.maxX, b.maxX) > Math.max(a.minX, b.minX) && Math.min(a.maxY, b.maxY) > Math.max(a.minY, b.minY) && Math.min(a.maxZ, b.maxZ) > Math.max(a.minZ, b.minZ)
 }
 const normal = (edge: Edge): Point => edge === 'N' ? { x: 0, z: 1 } : edge === 'E' ? { x: 1, z: 0 } : edge === 'S' ? { x: 0, z: -1 } : { x: -1, z: 0 }
 const usedKey = (index: number, portId: string) => `${index}\u0000${portId}`
 export const portAllows = (port: Port, targetTypeId: string) => port.allowedTypeIds === null || port.allowedTypeIds.includes(targetTypeId)
-export function hashSeed(text: string): number {
-  let hash = 2166136261
-  for (let i = 0; i < text.length; i++) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 16777619) }
-  return hash >>> 0
-}
-export function drawSpawn(rule: SpawnRule, rng: XorShift32): string[] {
-  const count = rule.min + rng.index(rule.max - rule.min + 1)
-  const total = rule.entries.reduce((sum, e) => sum + e.weight, 0)
-  const result: string[] = []
-  for (let i = 0; i < count; i++) {
-    let value = rng.next() * total
-    for (const entry of rule.entries) { value -= entry.weight; if (value < 0) { result.push(entry.id); break } }
-  }
-  return result
-}
-export function spawnMarkers(project: RuntimeProject, placements: Placement[], seed: number): SpawnMarker[] {
-  const modules = new Map(project.modules.map(m => [m.id, m]))
-  const markers: SpawnMarker[] = []
-  for (const placement of placements) {
-    const module = modules.get(placement.moduleId)!
-    const base = `${seed >>> 0}:${placement.instanceId}:${placement.moduleId}`
-    const positions = new XorShift32(hashSeed(`${base}:positions`))
-    for (const kind of ['item', 'enemy'] as const) {
-      const ids = drawSpawn(module[kind === 'item' ? 'items' : 'enemies'], new XorShift32(hashSeed(`${base}:${kind}`)))
-      for (const id of ids) {
-        const local = { x: module.bounds.minX + .15 * (module.bounds.maxX - module.bounds.minX) + positions.next() * .7 * (module.bounds.maxX - module.bounds.minX), z: module.bounds.minZ + .15 * (module.bounds.maxZ - module.bounds.minZ) + positions.next() * .7 * (module.bounds.maxZ - module.bounds.minZ) }
-        const rotated = rotate(local, placement.rotation)
-        markers.push({ instanceId: placement.instanceId, kind, id, x: Math.round(placement.x + rotated.x), z: Math.round(placement.z + rotated.z) })
-      }
-    }
-  }
-  return markers
-}
-
 export function generate(project: RuntimeProject, seed: number, onProgress?: Progress, maxChecks = 120000, maxRestarts = 24): PreviewResult {
   const errors = validateProject(project)
   if (errors.length) throw new Error(errors.join('\n'))
@@ -133,7 +98,7 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
       ...project.types.filter(t => (counts[t.id] ?? 0) < t.requiredMin).map(t => `${t.id}: required at least ${t.requiredMin}, placed ${counts[t.id] ?? 0}`),
       ...project.types.filter(t => (counts[t.id] ?? 0) !== targets[t.id]).map(t => `${t.id}: target ${targets[t.id]}, placed ${counts[t.id] ?? 0}`),
     ]
-    return { placements: placements.map(p => ({ ...p, parent: p.parent ? { ...p.parent } : undefined })), markers: spawnMarkers(project, placements, seed), complete, seed: seed >>> 0, checks, restarts, targets, warnings }
+    return { placements: placements.map(p => ({ ...p, parent: p.parent ? { ...p.parent } : undefined })), complete, seed: seed >>> 0, checks, restarts, targets, warnings }
   }
   const updateBest = (placements: Placement[]) => {
     const s = score(placements)
@@ -161,7 +126,7 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
     for (const [id, count] of rootOptions) { if (rootPick < count) { rootId = id; break } rootPick -= count }
     bag.set(rootId, bag.get(rootId)! - 1)
     const rootModule = moduleById.get(rootId)!
-    const placements: Placement[] = [{ instanceId: 'p0', moduleId: rootId, typeId: rootModule.typeId, x: 0, z: 0, rotation: 0 }]
+    const placements: Placement[] = [{ instanceId: 'p0', moduleId: rootId, typeId: rootModule.typeId, x: 0, y: 0, z: 0, rotation: 0 }]
     const used = new Set<string>()
     updateBest(placements)
 
@@ -176,7 +141,7 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
         for (const parentPort of parentModule.ports) {
           if (used.has(usedKey(pi, parentPort.id))) continue
           const parentPoint = rotate(parentPort, parent.rotation)
-          const worldPoint = { x: parent.x + parentPoint.x, z: parent.z + parentPoint.z }
+          const worldPoint = { x: parent.x + parentPoint.x, y: parent.y + parentPort.y, z: parent.z + parentPoint.z }
           const parentNormal = rotate(normal(parentPort.edge), parent.rotation)
           for (const { module: child, count } of bagModules) {
             const weight = weightFor(project.connections, parent.typeId, child.typeId)
@@ -188,10 +153,10 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
               checks++
               if (checks > maxChecks) break
               const offset = rotate(childPort, rotation)
-              const x = worldPoint.x - offset.x, z = worldPoint.z - offset.z
-              const bounds = rotatedBounds(child.bounds, rotation, x, z)
-              if (placements.some(p => overlaps(bounds, rotatedBounds(moduleById.get(p.moduleId)!.bounds, p.rotation, p.x, p.z)))) continue
-              candidates.push({ parentIndex: pi, parentPort, child, childPort, rotation, x, z, rank: weightedRank(weight * count) })
+              const x = worldPoint.x - offset.x, y = worldPoint.y - childPort.y, z = worldPoint.z - offset.z
+              const bounds = rotatedBounds(child.bounds, rotation, x, y, z)
+              if (placements.some(p => overlaps(bounds, rotatedBounds(moduleById.get(p.moduleId)!.bounds, p.rotation, p.x, p.y, p.z)))) continue
+              candidates.push({ parentIndex: pi, parentPort, child, childPort, rotation, x, y, z, rank: weightedRank(weight * count) })
             }
           }
         }
@@ -202,7 +167,7 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
         if ((bag.get(c.child.id) ?? 0) <= 0 || used.has(usedKey(c.parentIndex, c.parentPort.id))) continue
         const index = placements.length
         const parent = placements[c.parentIndex]
-        placements.push({ instanceId: `p${index}`, moduleId: c.child.id, typeId: c.child.typeId, x: c.x, z: c.z, rotation: c.rotation, parent: { instanceId: parent.instanceId, parentPortId: c.parentPort.id, ownPortId: c.childPort.id } })
+        placements.push({ instanceId: `p${index}`, moduleId: c.child.id, typeId: c.child.typeId, x: c.x, y: c.y, z: c.z, rotation: c.rotation, parent: { instanceId: parent.instanceId, parentPortId: c.parentPort.id, ownPortId: c.childPort.id } })
         bag.set(c.child.id, bag.get(c.child.id)! - 1)
         used.add(usedKey(c.parentIndex, c.parentPort.id))
         used.add(usedKey(index, c.childPort.id))

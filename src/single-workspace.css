@@ -159,6 +159,21 @@ input.default-value:not(:focus) { color: #899ba0; }
 .module-svg { touch-action: none; }
 .module-svg.placing { cursor: crosshair; }
 .preview-interactive { position: relative; width: 100%; height: 100%; background: #091922; }
+.three-canvas-shell { position: relative; width: 100%; min-height: 400px; background: #091922; border: 1px solid #354750; }
+.three-canvas { width: 100%; height: 420px; outline: none; touch-action: none; }
+.three-canvas:focus-visible { outline: 2px solid #91e6dc; outline-offset: -2px; }
+.three-canvas canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.three-canvas-toolbar { position: absolute; z-index: 3; top: 8px; right: 8px; display: flex; gap: 6px; }
+.three-canvas-toolbar button { background: #172b34; min-height: 30px; }
+.three-canvas-help { padding: 8px 10px; color: #b6ced1; font-size: 11px; line-height: 1.4; }
+.three-selection { position: absolute; left: 10px; bottom: 38px; padding: 5px 8px; color: #fff; background: #102b35e8; font-size: 11px; }
+.floating-body .three-canvas { height: 300px; }
+.floating-body .three-canvas-shell { min-height: 0; }
+.advanced-bounds { border: 1px solid #354750; padding: 12px; }
+.advanced-bounds summary { cursor: pointer; font-weight: 700; }
+.advanced-bounds .row { margin-top: 12px; }
+.port-editor .row.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 600px) { .port-editor .row.four { grid-template-columns: 1fr; } .three-canvas { height: 330px; } }
 .preview-interactive .preview-svg { width: 100%; height: 100%; touch-action: none; cursor: grab; }
 .preview-interactive .preview-svg:active { cursor: grabbing; }
 .preview-tools { position: absolute; z-index: 2; right: 8px; top: 8px; display: flex; gap: 4px; }

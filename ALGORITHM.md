@@ -1,36 +1,24 @@
-# 地图预览算法与坐标规范（v3）
+# Map generation and coordinate rules (v4)
 
-## 数据约定
+## Coordinates and geometry
 
-- X 向右、Z 向前，Y 向上；所有模块放在同一 Y 高度。运行时 JSON 的距离为**整数毫米**，界面以米显示。FBX 和 Unity 使用 1 单位 = 1 米、根缩放 1。
-- `bounds` 是相对模型原点的轴对齐范围，保存 `minX/maxX/minZ/maxZ`，因此包含原点相对占地的偏移。连接口 `(x,z)` 也相对原点。`N/E/S/W` 分别为 `+Z/+X/-Z/-X`。
-- 全局 `doorWidth` 是接口沿边的长度。接口中心到两个角的距离必须至少为 `doorWidth / 2`。所有门洞同宽；拼接只需对齐接口中心与相反法线。
-- 每个接口的 `allowedTypeIds` 为 `null` 时不额外限制目标类型，为类型 ID 数组时只接受数组中的类型；空数组不接受任何类型。父接口须接受子类型，子接口须接受父类型；还须存在从父类型指向子类型的有向连接，三项同时成立才能拼接。箭头只规定生成方向，不限制玩家通过门洞的方向。
-- `rotation` 为 0、1、2、3 个绕 +Y 轴的 90°。坐标变换依次为 `(x,z)`、`(z,-x)`、`(-x,-z)`、`(-z,x)`。子模块先旋转，再平移，使两个接口中心重合。
-- 重叠判定使用旋转后 X-Z 矩形的**正面积交集**；仅边界接触合法。一个新模块只消耗一个已有模块接口和自己的一个接口，不创建环路。
+- X points right, Y points up, and Z points forward. Runtime distances are integer millimetres; the editor displays metres. FBX file units are converted using `UnitScaleFactor`; the Unity prefab root and scene transform use scale 1.
+- Each module stores `minX/maxX/minY/maxY/minZ/maxZ` relative to its model origin. FBX import supplies the initial axis-aligned box. A manual advanced override changes the box used for generation; the editor does not test the actual mesh for collision.
+- A port stores `edge` (`N/E/S/W` = `+Z/+X/-Z/-X`), local `(x,y,z)`, and `allowedTypeIds`. Its rectangular opening has project-wide `doorWidth` and `doorHeight`. The entire rectangle must fit on a vertical side face, including half-width clearance from both horizontal corners and half-height clearance from top and bottom. A thin model can be imported, but cannot receive a port until its bounds provide enough height.
+- A port with `allowedTypeIds: null` accepts any type permitted by the directed relation graph; an array restricts the accepted types. Both ports must accept the opposite type.
+- A placement has world `(x,y,z)` and a rotation of 0, 1, 2, or 3 quarter turns about +Y. X/Z transforms are `(x,z)`, `(z,-x)`, `(-x,-z)`, `(-z,x)`; local Y is unchanged. The new module's world translation is the existing port's world center minus the rotated new port's local center, including Y.
+- Bounds rotate around the model origin, then translate. Two boxes overlap only when their intersections have positive length on **all three axes**. Face, edge, or point contact is legal. This simple box may reject otherwise usable empty space under a stair or near decoration.
 
-## 类型配额
+## Quotas and search
 
-1. `modulesAfterStart` 是起点之后的普通模块数；完整地图总数为 `1 + modulesAfterStart`。起点类型不参与百分比分配，从其具体模块中等概率选一个作为唯一起点，位置 `(0,0)`、旋转 0。连接不能指向起点类型。
-2. 仅非起点类型的 `percent` 合计为 100%。对每种非起点类型计算 `modulesAfterStart × percent / 100`，先取整数部分，剩余名额按小数部分从大到小分配；相同小数按类型 ID 的序号排序。
-3. `requiredMin` 是非起点类型的最低数量，包含在其目标名额内。超过目标或比例不合计 100% 会阻止生成。每次重试按目标有放回地等概率抽取各类型的具体模块；起点另行等概率抽一个。
+1. `modulesAfterStart` counts non-start modules. The map contains one additional start module, sampled uniformly from the start type's concrete modules and placed at world `(0,0,0)` with rotation 0. The start type has no share and cannot be the target of a directed relation.
+2. Non-start percentages sum to 100%. Multiply each by `modulesAfterStart`, take the integer floors, then distribute remaining slots by descending fractional remainder and ascending type ID. `requiredMin` is included in these targets and cannot exceed its target.
+3. Concrete modules are sampled with replacement, uniformly within each type, into a quota bag. A placed module can extend from any unused port. A directed `from → to` relation, both ports' type permissions, opposite rotated side normals, exact three-dimensional center alignment, and no positive-volume overlap are required. Each new module attaches to one parent; the search does not create cycles.
+4. Candidate rank is `-ln(max(U, 1/2^32)) / (connectionWeight × remainingConcreteModuleCount)`. Try ranks ascending, then parent index, module ID, port ID, rotation. Weights affect adjacency preference and do not change type quotas.
+5. Depth-first search backtracks on failure. Each level tries at most 96 ranked candidates. The generator checks at most 120,000 candidates and restarts the sampled bag at most 24 times. The browser worker also has an approximately ten-second timeout. A full result stops the search. Otherwise select the best partial result by required minimum deficits, total count deficit, then absolute type-target deviation, and show warnings.
 
-## 搜索与随机性
+## Randomness and preview
 
-- 使用无符号 32 位 `xorshift32`：`x ^= x << 13; x ^= x >>> 17; x ^= x << 5`，每步结果按无符号 32 位截断。种子零替换为 `0x6d2b79f5`；随机小数是结果除以 `2^32`。
-- 枚举所有已放置模块的空闲接口、清单中尚未使用的模块、其接口以及 4 种旋转。仅从已放置的父类型沿 `from → to` 有向连接生成子类型；过滤没有该箭头、任一接口不接受对方类型、法线不相反和占地重叠的候选。
-- 候选的相对权重是当前 `from → to` 箭头的连接权重，乘以清单中该具体模块的剩余数量。对每个候选取 `-ln(max(U, 1/2^32)) / weight` 作为随机排序键，升序尝试。连接权重只影响邻接，不改变类型总数。
-- 深度优先拼接，走不通则回溯。每层最多尝试排序最前的 96 个候选；单次最多检查 120,000 个接口候选、重新抽取模块清单最多 24 次。浏览器工作线程另有约 10 秒安全超时。
-- 找到完整布局立即返回。否则比较已找到布局：先比必出最低数量缺失，再比总模块数缺失，最后比类型目标绝对偏差；展示最优布局与具体告警。10 秒安全超时可能使不同性能设备上的**残缺**布局不同，完整搜索按种子与上述规则复现。
+The generator uses unsigned 32-bit `xorshift32`: `x ^= x << 13; x ^= x >>> 17; x ^= x << 5`. A zero seed is replaced with `0x6d2b79f5`; each random fraction is the next unsigned result divided by `2^32`. Stable candidate enumeration and millimetre coordinates make completed layouts reproducible for a fixed seed.
 
-## 内部物品与敌人
-
-每个放置的模块实例使用**具体模块**的 `items` 和 `enemies` 规则。各规则先在闭区间 `[min,max]` 中等概率抽整数数量，再为每个名额按 `entries` 数组顺序及相对权重独立抽 ID；同一 ID 可重复。
-
-内部抽取使用与布局分离的随机序列，因此增加物品或敌人不会改变布局。对每个实例构造 UTF-16 字符串 `${seed}:${instanceId}:${moduleId}:item` 与对应的 `:enemy`；分别用 FNV-1a 32 位哈希（初值 `2166136261`，每个 UTF-16 code unit 异或后乘 `16777619`，每步截成无符号 32 位）作为上文 xorshift32 种子。`instanceId` 为按放置顺序生成的 `p0`、`p1`……。数量使用 `floor(U × (max-min+1)) + min`；每个 ID 使用 `U × 权重总和`，顺序减去每项权重，第一次结果小于零的项中选。Unity 可按此算法复现数量与 ID。
-
-预览中的物品圆点与敌人三角形使用第三条 `:positions` 随机序列，仅表示该实例抽出的内容。示意坐标不属于运行时 JSON，也不规定 Unity 的实际生成位置。
-
-## 预览门线
-
-每个接口都按 `doorWidth` 在边界上绘制门线，中心是该接口的旋转后世界坐标，方向是模块边界的切线。未使用接口绘制实线，连接使用的两个接口仅绘制一条虚线。未使用接口是正常状态，不生成告警；Unity 应在实际场景中封住它。门线状态只属于本次预览，不写入运行时 JSON。
+The preview draws colored occupancy boxes and rectangular ports. One connected rectangle is drawn for each joined pair with a solid empty outline. Unused ports have a solid hatched outline and are normal; Unity is responsible for sealing them. The connection state is preview-only and is not exported as a rule. Preview camera orbit, pan, zoom, and focus do not change any runtime data.

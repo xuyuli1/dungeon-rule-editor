@@ -3,10 +3,11 @@ import { ReactFlow, Background, Controls, type Edge as FlowEdge, type Node as Fl
 import { RelationEdge } from './RelationEdge'
 import { renameType } from './editorActions'
 import { downloadJson, importFbx, openProject, readJson, saveProject } from './io'
-import { emptyEditor, emptyProject, exampleProject, isId, meters, relationKey, toMm, type Bounds, type Edge, type EditorState, type Module, type ModuleType, type Port, type RuntimeProject, type SpawnRule, validateProject, typeTargets } from './model'
+import { emptyEditor, emptyProject, exampleProject, isId, meters, relationKey, toMm, type Bounds, type Edge, type EditorState, type Module, type ModuleType, type Port, type RuntimeProject, validateProject, typeTargets } from './model'
 import { type PreviewResult } from './generator'
 import { portAtBoundary, remapPorts } from './geometry'
-import { FloatingWindow, ModuleCanvas, ModuleSlot, PreviewCanvas } from './WorkspaceWidgets'
+import { FloatingWindow, ModuleSlot } from './WorkspaceWidgets'
+import { ThreeCanvas } from './ThreeCanvas'
 import { clearDraft, loadDraft, saveDraft } from './autosave'
 import { nextTypeColor, typeColorSwatches } from './typeColors'
 
@@ -14,7 +15,6 @@ type GraphMenu = { kind: 'pane' | 'node' | 'edge'; id?: string; x: number; y: nu
 type FbxMode = { kind: 'new'; typeId: string } | { kind: 'replace'; moduleId: string }
 const edgeNames: Record<Edge, string> = { N: 'North (+Z)', E: 'East (+X)', S: 'South (-Z)', W: 'West (-X)' }
 const relationEdgeTypes = { relation: RelationEdge }
-const newSpawn = (): SpawnRule => ({ min: 0, max: 0, entries: [] })
 const num = (value: string, fallback = 0) => value === '' ? fallback : Number(value)
 const uniqueId = (existing: string[], prefix: string) => { let i = 1; while (existing.includes(`${prefix}_${i}`)) i++; return `${prefix}_${i}` }
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error)
@@ -40,33 +40,22 @@ function NumberField({ label, value, onChange, step = 1, min, max, suffix, valid
   }
   return <Field label={label}><div className="input-unit"><input className={defaultValue !== undefined && value === defaultValue && !editing.current && draft === String(defaultValue) ? 'default-value' : undefined} type="text" inputMode="decimal" aria-invalid={!!error} value={draft} onFocus={() => { editing.current = true }} onChange={e => { setDraft(e.target.value); setError('') }} onBlur={() => { editing.current = false; if (cancelCommit.current) { cancelCommit.current = false; setDraft(String(value)); setError('') } else commit() }} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { cancelCommit.current = true; e.currentTarget.blur() } }} />{suffix && <small>{suffix}</small>}</div>{error && <small className="field-error" role="alert">{error}</small>}</Field>
 }
-function SpawnEditor({ title, rule, onChange }: { title: string; rule: SpawnRule; onChange: (next: SpawnRule) => void }) {
-  return <section className="subsection"><div className="section-head"><h3>{title}</h3></div><div className="row two">
-    <NumberField label="Minimum" value={rule.min} min={0} defaultValue={0} onChange={min => onChange({ ...rule, min })} />
-    <NumberField label="Maximum" value={rule.max} min={0} defaultValue={0} onChange={max => onChange({ ...rule, max })} />
-  </div><div className="list compact">{rule.entries.map((entry, index) => <div className="entry-row" key={index}>
-    <input aria-label="Asset ID" placeholder="Asset ID" value={entry.id} onChange={e => onChange({ ...rule, entries: rule.entries.map((v, i) => i === index ? { ...v, id: e.target.value } : v) })} />
-    <input className={entry.weight === 1 ? 'default-value' : undefined} aria-label="Weight" title="Relative weight" type="number" min="0.001" step="0.1" value={entry.weight} onChange={e => onChange({ ...rule, entries: rule.entries.map((v, i) => i === index ? { ...v, weight: num(e.target.value) } : v) })} />
-    <button className="icon danger" title="Remove" onClick={() => onChange({ ...rule, entries: rule.entries.filter((_, i) => i !== index) })}>×</button>
-  </div>)}</div><button className="quiet" onClick={() => onChange({ ...rule, entries: [...rule.entries, { id: '', weight: 1 }] })}>＋ Add {title === 'Items' ? 'item' : 'enemy'} ID</button>
-  </section>
-}
-
 function PortEditor({ port, module, project, onChange, onDelete }: { port: Port; module: Module; project: RuntimeProject; onChange: (next: Port) => void; onDelete: () => void }) {
   const [id, setId] = useState(port.id)
   const [x, setX] = useState(meters(port.x))
+  const [y, setY] = useState(meters(port.y))
   const [z, setZ] = useState(meters(port.z))
   const [error, setError] = useState('')
-  useEffect(() => { setId(port.id); setX(meters(port.x)); setZ(meters(port.z)); setError('') }, [port.id, port.x, port.z])
+  useEffect(() => { setId(port.id); setX(meters(port.x)); setY(meters(port.y)); setZ(meters(port.z)); setError('') }, [port.id, port.x, port.y, port.z])
   const commit = () => {
     const nextId = id.trim()
     if (!isId(nextId) || module.ports.some(p => p.id === nextId && p !== port)) { setError('Enter a unique port ID.'); return }
-    if (!/^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(x.trim()) || !/^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(z.trim())) { setError('Enter valid X and Z coordinates.'); return }
-    const placement = portAtBoundary(module.bounds, toMm(Number(x)), toMm(Number(z)), project.settings.doorWidth)
-    if (!placement) { setError('Point must lie on an edge and clear each corner by half the door width.'); return }
+    if (![x, y, z].every(value => /^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim()))) { setError('Enter valid X, Y and Z coordinates.'); return }
+    const placement = portAtBoundary(module.bounds, toMm(Number(x)), toMm(Number(y)), toMm(Number(z)), project.settings.doorWidth, project.settings.doorHeight)
+    if (!placement) { setError('The full connector rectangle must fit on a vertical side face.'); return }
     setError(''); onChange({ ...port, ...placement, id: nextId })
   }
-  return <div className="port-editor"><div className="port-editor-head"><strong>{port.id}</strong><span>{edgeNames[port.edge]}</span><button className="icon danger" aria-label={`Remove port ${port.id}`} onClick={onDelete}>×</button></div><div className="row three"><Field label="Port ID"><input value={id} onChange={e => setId(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') commit() }} /></Field><Field label="Local X (m)"><input inputMode="decimal" value={x} onChange={e => setX(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') commit() }} /></Field><Field label="Local Z (m)"><input inputMode="decimal" value={z} onChange={e => setZ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') commit() }} /></Field></div><button className="quiet" onClick={commit}>Apply port details</button>
+  return <div className="port-editor"><div className="port-editor-head"><strong>{port.id}</strong><span>{edgeNames[port.edge]}</span><button className="icon danger" aria-label={`Remove port ${port.id}`} onClick={onDelete}>×</button></div><div className="row four"><Field label="Port ID"><input value={id} onChange={e => setId(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') commit() }} /></Field><Field label="Local X (m)"><input inputMode="decimal" value={x} onChange={e => setX(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') commit() }} /></Field><Field label="Local Y (m)"><input inputMode="decimal" value={y} onChange={e => setY(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') commit() }} /></Field><Field label="Local Z (m)"><input inputMode="decimal" value={z} onChange={e => setZ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') commit() }} /></Field></div><button className="quiet" onClick={commit}>Apply port details</button>
     <div className="field"><span>Allowed target types</span><details className="type-multiselect"><summary>{port.allowedTypeIds === null ? 'Any related type' : port.allowedTypeIds.length ? port.allowedTypeIds.join(', ') : 'No target types'}</summary><div><button className="quiet" onClick={() => onChange({ ...port, allowedTypeIds: null })}>Any related type</button>{project.types.map(t => <label key={t.id}><input type="checkbox" checked={port.allowedTypeIds?.includes(t.id) ?? false} onChange={e => { const ids = e.target.checked ? [...(port.allowedTypeIds ?? []), t.id] : (port.allowedTypeIds ?? []).filter(id => id !== t.id); onChange({ ...port, allowedTypeIds: ids }) }} />{t.id}</label>)}</div></details></div><p className="hint">Both connected ports must accept the other module's type.</p>{error && <small className="field-error" role="alert">{error}</small>}</div>
 }
 function TypeIdInput({ type, project, onCommit }: { type: ModuleType; project: RuntimeProject; onCommit: (nextId: string) => void }) {
@@ -104,7 +93,7 @@ export default function App() {
   const [preview, setPreview] = useState<PreviewResult | null>(null)
   const [generating, setGenerating] = useState(false)
   const [notice, setNotice] = useState('')
-  const noticeIsError = /failed|error|invalid|resolve|enter a|shorter|already exists|no complete|10-second|stopped/i.test(notice)
+  const noticeIsError = /failed|error|invalid|resolve|enter a|shorter|thinner|already exists|no complete|10-second|stopped/i.test(notice)
   const workerRef = useRef<Worker | null>(null)
   const timeoutRef = useRef<number | null>(null)
   const projectInput = useRef<HTMLInputElement>(null)
@@ -163,7 +152,7 @@ export default function App() {
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
   })
-  const openWindow = (kind: EditorState['windows'][number]['kind'], id: string, position?: { x: number; y: number }) => { setEditor(current => { const maxZ = Math.max(100, ...current.windows.map(w => w.z)); const existing = current.windows.find(w => w.kind === kind && w.id === id); return { ...current, windows: existing ? current.windows.map(w => w === existing ? { ...w, z: maxZ + 1 } : w) : [...current.windows, { kind, id, x: position?.x ?? Math.min(200 + current.windows.length * 28, Math.max(8, window.innerWidth - 450)), y: position?.y ?? Math.min(100 + current.windows.length * 28, Math.max(8, window.innerHeight - 500)), width: kind === 'module' ? 600 : kind === 'type' ? 420 : 380, height: kind === 'module' ? 650 : kind === 'type' ? 540 : 260, z: maxZ + 1 }] } }); setGraphMenu(null) }
+  const openWindow = (kind: EditorState['windows'][number]['kind'], id: string, position?: { x: number; y: number }) => { setEditor(current => { const maxZ = Math.max(100, ...current.windows.map(w => w.z)); const existing = current.windows.find(w => w.kind === kind && w.id === id); return { ...current, windows: existing ? current.windows.map(w => w === existing ? { ...w, z: maxZ + 1 } : w) : [...current.windows, { kind, id, x: position?.x ?? Math.min(200 + current.windows.length * 28, Math.max(8, window.innerWidth - 450)), y: position?.y ?? (kind === 'module' ? 12 : Math.min(100 + current.windows.length * 28, Math.max(8, window.innerHeight - 500))), width: kind === 'module' ? 650 : kind === 'type' ? 420 : 380, height: kind === 'module' ? 700 : kind === 'type' ? 540 : 260, z: maxZ + 1 }] } }); setGraphMenu(null) }
   const openType = (id: string, position?: { x: number; y: number }) => { setFocusType(id); setActiveRelationKey(''); openWindow('type', id, position) }
   const openModule = (id: string) => { setSelectedModule(id); const owner = project.modules.find(m => m.id === id); if (owner) setFocusType(owner.typeId); openWindow('module', id) }
   const updateWindow = (layout: EditorState['windows'][number]) => setEditor(current => ({ ...current, windows: current.windows.map(w => w.kind === layout.kind && w.id === layout.id ? layout : w) }))
@@ -233,20 +222,20 @@ export default function App() {
     try {
       const bounds = await importFbx(file)
       if (mode.kind === 'new') {
-        mutate(draft => draft.modules.push({ id, typeId: mode.typeId, bounds, ports: [], items: newSpawn(), enemies: newSpawn() }))
+        mutate(draft => draft.modules.push({ id, typeId: mode.typeId, bounds, ports: [] }))
       } else {
         const old = project.modules.find(m => m.id === oldId)
         if (!old) throw new Error('Module no longer exists')
         mutate(draft => {
           const target = draft.modules.find(m => m.id === oldId)!
-          target.ports = remapPorts(target.ports, target.bounds, bounds, draft.settings.doorWidth)
+          target.ports = remapPorts(target.ports, target.bounds, bounds, draft.settings.doorWidth, draft.settings.doorHeight)
           target.bounds = bounds
           target.id = id
         })
       }
       setFiles(current => { const next = new Map(current); if (oldId) next.delete(oldId); next.set(id, file); return next })
       setEditor(current => { const modelNames = { ...current.modelNames }; if (oldId) delete modelNames[oldId]; modelNames[id] = file.name; return { ...current, modelNames, windows: current.windows.map(w => oldId && w.kind === 'module' && w.id === oldId ? { ...w, id } : w) } })
-      openModule(id); setNotice(`Imported ${file.name}. Check bounds and ports.`)
+      openModule(id); setNotice(bounds.maxY - bounds.minY < project.settings.doorHeight ? `Imported ${file.name}. The model is thinner than the connector height; open Advanced bounds to add usable height before placing connectors.` : `Imported ${file.name}. Check bounds and ports.`)
     } catch (error) { setNotice(`Import failed: ${errorText(error)}`) }
   }
   const chooseFbx = (mode: FbxMode) => { fbxMode.current = mode; fbxInput.current?.click() }
@@ -290,10 +279,11 @@ export default function App() {
   const setBounds = (id: string, key: keyof Bounds, value: number) => {
     updateModule(id, m => {
       m.bounds[key] = toMm(value)
-      const b = m.bounds, half = project.settings.doorWidth / 2
+      const b = m.bounds, half = project.settings.doorWidth / 2, halfHeight = project.settings.doorHeight / 2
       for (const p of m.ports) {
         if (p.edge === 'N' || p.edge === 'S') { p.z = p.edge === 'N' ? b.maxZ : b.minZ; p.x = Math.round(Math.max(b.minX + half, Math.min(b.maxX - half, p.x))) }
         else { p.x = p.edge === 'E' ? b.maxX : b.minX; p.z = Math.round(Math.max(b.minZ + half, Math.min(b.maxZ - half, p.z))) }
+        p.y = Math.round(Math.max(b.minY + halfHeight, Math.min(b.maxY - halfHeight, p.y)))
       }
     })
   }
@@ -335,13 +325,13 @@ export default function App() {
   return <div className="app-shell">
     <header className="topbar"><div className="file-menu" ref={menuRef}>
       <button className="menu-trigger" aria-label="File menu" title="File menu" aria-expanded={menuOpen} aria-controls="file-menu-panel" onClick={() => setMenuOpen(open => !open)}><span aria-hidden="true">{menuOpen ? '×' : '☰'}</span></button>
-      {menuOpen && <div id="file-menu-panel" className="menu-panel"><button onClick={() => { setMenuOpen(false); if (window.confirm('Create a new project and clear the local draft? Save ZIP first if you need a backup.')) { void saveQueue.current.then(() => clearDraft()).then(() => load(emptyProject())).catch(error => setNotice(`New project failed: ${errorText(error)}`)) } }}>New project</button><button onClick={() => { setMenuOpen(false); if (!project.types.length || window.confirm('Replace the current project with the example?')) load(exampleProject()) }}>Load example</button><button onClick={() => { setMenuOpen(false); projectInput.current?.click() }}>Open ZIP</button><button onClick={() => { setMenuOpen(false); jsonInput.current?.click() }}>Import JSON</button><button onClick={() => { setMenuOpen(false); saveProject(project, editor, files).then(() => setNotice('Project ZIP saved')).catch(e => setNotice(errorText(e))) }}>Save ZIP</button><button onClick={() => { setMenuOpen(false); exportJson() }}>Export JSON</button><div className="menu-meta">{project.types.length} TYPES · {project.modules.length} MODULES<br />V3 · X-Z PLANE · 1 UNIT = 1 M<br />FILES STAY IN THIS BROWSER</div></div>}
+      {menuOpen && <div id="file-menu-panel" className="menu-panel"><button onClick={() => { setMenuOpen(false); if (window.confirm('Create a new project and clear the local draft? Save ZIP first if you need a backup.')) { void saveQueue.current.then(() => clearDraft()).then(() => load(emptyProject())).catch(error => setNotice(`New project failed: ${errorText(error)}`)) } }}>New project</button><button onClick={() => { setMenuOpen(false); if (!project.types.length || window.confirm('Replace the current project with the example?')) load(exampleProject()) }}>Load example</button><button onClick={() => { setMenuOpen(false); projectInput.current?.click() }}>Open ZIP</button><button onClick={() => { setMenuOpen(false); jsonInput.current?.click() }}>Import JSON</button><button onClick={() => { setMenuOpen(false); saveProject(project, editor, files).then(() => setNotice('Project ZIP saved')).catch(e => setNotice(errorText(e))) }}>Save ZIP</button><button onClick={() => { setMenuOpen(false); exportJson() }}>Export JSON</button><div className="menu-meta">{project.types.length} TYPES · {project.modules.length} MODULES<br />V4 · 3D · 1 UNIT = 1 M<br />FILES STAY IN THIS BROWSER</div></div>}
     </div><span className={`save-indicator ${saveStatus === 'Save failed' ? 'failed' : ''}`} role="status">{saveStatus}</span><input hidden type="file" accept=".zip" ref={projectInput} onChange={e => handleFile(e, 'project')} /><input hidden type="file" accept=".json" ref={jsonInput} onChange={e => handleFile(e, 'json')} /><input hidden type="file" accept=".fbx" ref={fbxInput} onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file && fbxMode.current) void importModuleFile(file, fbxMode.current) }} /></header>
     {notice && <div role={noticeIsError ? 'alert' : 'status'} className={`notice ${noticeIsError ? 'notice-error' : 'notice-success'}`}><span>{notice}</span><button aria-label="Dismiss notification" title="Dismiss" onClick={() => setNotice('')}>×</button></div>}
     <main className="editor-workspace">
       <section className="editor-panel rules-panel" aria-label="Rule network">
         <div className="panel-heading"><div><span className="eyebrow">01 / RULE NETWORK</span><h1>Rule network</h1></div></div>
-        <div className="map-settings row three"><NumberField label="Modules after start" value={project.settings.modulesAfterStart} min={1} max={500} onChange={n => mutate(d => { d.settings.modulesAfterStart = n })} /><Field label="Start type"><select value={project.settings.startTypeId} onChange={e => { const nextId = e.target.value; mutate(d => { const oldStart = d.types.find(t => t.id === d.settings.startTypeId); const newStart = d.types.find(t => t.id === nextId); if (oldStart && newStart && oldStart !== newStart) { oldStart.percent = newStart.percent; newStart.percent = 0; newStart.requiredMin = 0 } d.settings.startTypeId = nextId }) }}><option value="">Select type</option>{project.types.map(t => <option key={t.id} value={t.id}>{t.id}</option>)}</select></Field><NumberField label="Door width" value={project.settings.doorWidth / 1000} min={0.001} step={0.001} suffix="m" onChange={n => mutate(d => { d.settings.doorWidth = toMm(n) })} /></div>
+        <div className="map-settings row four"><NumberField label="Modules after start" value={project.settings.modulesAfterStart} min={1} max={500} onChange={n => mutate(d => { d.settings.modulesAfterStart = n })} /><Field label="Start type"><select value={project.settings.startTypeId} onChange={e => { const nextId = e.target.value; mutate(d => { const oldStart = d.types.find(t => t.id === d.settings.startTypeId); const newStart = d.types.find(t => t.id === nextId); if (oldStart && newStart && oldStart !== newStart) { oldStart.percent = newStart.percent; newStart.percent = 0; newStart.requiredMin = 0 } d.settings.startTypeId = nextId }) }}><option value="">Select type</option>{project.types.map(t => <option key={t.id} value={t.id}>{t.id}</option>)}</select></Field><NumberField label="Connector width" value={project.settings.doorWidth / 1000} min={0.001} step={0.001} suffix="m" onChange={n => mutate(d => { d.settings.doorWidth = toMm(n) })} /><NumberField label="Connector height" value={project.settings.doorHeight / 1000} min={0.001} step={0.001} suffix="m" onChange={n => mutate(d => { d.settings.doorHeight = toMm(n) })} /></div>
         <div className="graph-head"><span>TYPE CONNECTIONS</span><span>Right click for actions · double click to edit</span></div>
         <div className="graph" ref={graphRef} tabIndex={0} aria-label="Type connection graph" onPointerMove={e => { if (connectSource) setPointer({ x: e.clientX, y: e.clientY }); if (pressRef.current && Math.hypot(e.clientX - pressRef.current.x, e.clientY - pressRef.current.y) > 8) clearLongPress() }} onPointerUp={clearLongPress} onPointerCancel={clearLongPress} onPointerDownCapture={e => { if (e.pointerType !== 'touch') return; const x = e.clientX, y = e.clientY; const target = e.target as HTMLElement; const node = target.closest('.react-flow__node') as HTMLElement | null; const edge = target.closest('.react-flow__edge') as HTMLElement | null; clearLongPress(); pressRef.current = { x, y, timer: window.setTimeout(() => { showMenu(node ? 'node' : edge ? 'edge' : 'pane', x, y, node?.dataset.id ?? edge?.dataset.id); pressRef.current = null }, 500) } }}>
           <button className="graph-more" aria-label="Graph actions" title="Graph actions" onClick={e => { const rect = e.currentTarget.getBoundingClientRect(); showMenu('pane', rect.right, rect.bottom) }}>⋯</button>
@@ -353,7 +343,7 @@ export default function App() {
         {errors.length > 0 && <Validation errors={errors} />}
       </section>
       <div className="preview-column">
-        <section className="editor-panel preview-panel"><div className="panel-heading"><div><span className="eyebrow">02 / MAP PREVIEW</span><h2>Map preview</h2></div>{preview && <span className={preview.complete ? 'badge good' : 'badge warn'}>{preview.complete ? 'COMPLETE' : 'PARTIAL'}</span>}</div><div className="preview-stage">{preview?.placements.length ? <PreviewCanvas project={project} result={preview} /> : <div className="placeholder"><span>◇</span><h2>No preview yet</h2><p>Set up types, modules and connections, then generate a map.</p></div>}</div></section>
+        <section className="editor-panel preview-panel"><div className="panel-heading"><div><span className="eyebrow">02 / MAP PREVIEW</span><h2>Map preview</h2></div>{preview && <span className={preview.complete ? 'badge good' : 'badge warn'}>{preview.complete ? 'COMPLETE' : 'PARTIAL'}</span>}</div><div className="preview-stage">{preview?.placements.length ? <ThreeCanvas project={project} result={preview} doorWidth={project.settings.doorWidth} doorHeight={project.settings.doorHeight} /> : <div className="placeholder"><span>◇</span><h2>No preview yet</h2><p>Set up types, modules and connections, then generate a map.</p></div>}</div></section>
         <section className="editor-panel results-panel"><div className="panel-heading"><div><span className="eyebrow">03 / GENERATION</span><h2>Generate & results</h2></div></div><div className="preview-controls"><Field label="Seed"><input type="number" min="0" max="4294967295" value={seed} onChange={e => setSeed(num(e.target.value) >>> 0)} /></Field><button className="quiet" onClick={() => setSeed(Math.floor(Math.random() * 4294967295))}>New seed</button><button className="primary" disabled={generating || !!errors.length} onClick={startPreview}>{generating ? 'Generating…' : 'Generate'}</button>{generating && <button onClick={() => { stopWorker(); setNotice('Search stopped') }}>Stop</button>}</div>{preview ? <><div className={`result-status ${preview.complete ? 'success' : 'warning'}`}>{preview.complete ? '✓ All targets met' : '⚠ Best partial result'}</div><div className="stats"><div><span>Placed</span><strong>{preview.placements.length} / {project.settings.modulesAfterStart + 1}</strong></div><div><span>Candidates checked</span><strong>{preview.checks.toLocaleString()}</strong></div><div><span>Restarts</span><strong>{preview.restarts}</strong></div></div><h3>Type counts</h3>{project.types.map(t => <div className="quota-line" key={t.id}><span><i style={{ background: t.color }} />{t.id}</span><b>{preview.placements.filter(p => p.typeId === t.id).length} / {preview.targets[t.id] ?? 0}</b></div>)}{preview.warnings.length > 0 && <><h3>Warnings</h3><ul className="warnings">{preview.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></>}</> : <p className="empty">Generate a map to see counts and warnings.</p>}</section>
       </div>
     </main>
@@ -392,11 +382,10 @@ export default function App() {
         <p className="hint">{editor.modelNames[m.id] ?? 'No FBX loaded. Bounds remain editable.'}</p><div className="section-head"><h3>Model & footprint</h3><button className="danger-text" onClick={() => removeModule(m.id)}>Delete module</button></div>
         <div className="fbx-drop" onDragOver={e => e.preventDefault()} onDrop={e => dropFbx(e, { kind: 'replace', moduleId: m.id })}><strong>Drop FBX to replace</strong><button onClick={() => chooseFbx({ kind: 'replace', moduleId: m.id })}>Choose FBX</button></div>
         <Field label="Type"><select value={m.typeId} onChange={e => updateModule(m.id, draft => { draft.typeId = e.target.value })}>{project.types.map(t => <option key={t.id} value={t.id}>{t.id}</option>)}</select></Field>
-        <div className="row two"><div className="metric"><span>Width X</span><strong>{meters(m.bounds.maxX - m.bounds.minX)} m</strong></div><div className="metric"><span>Depth Z</span><strong>{meters(m.bounds.maxZ - m.bounds.minZ)} m</strong></div></div>
-        <section className="subsection"><h3>2D bounds & ports</h3><ModuleCanvas module={m} doorWidth={project.settings.doorWidth} onPortChange={updatePort} onAddPort={point => updateModule(m.id, draft => { draft.ports.push({ id: uniqueId(draft.ports.map(p => p.id), 'port'), ...point, allowedTypeIds: null }) })} onError={setNotice} /></section>
-        <section className="subsection"><h3>Bounds relative to model origin</h3><div className="row two">{(['minX', 'maxX', 'minZ', 'maxZ'] as const).map(key => <NumberField key={`${m.id}-${key}`} label={key} value={m.bounds[key] / 1000} step={0.001} suffix="m" validate={n => { const mm = toMm(n); const other = key.endsWith('X') ? (key === 'minX' ? m.bounds.maxX : m.bounds.minX) : (key === 'minZ' ? m.bounds.maxZ : m.bounds.minZ); return key.startsWith('min') ? mm >= other ? 'Minimum must be below maximum' : undefined : mm <= other ? 'Maximum must exceed minimum' : undefined }} onChange={n => setBounds(m.id, key, n)} />)}</div></section>
+        <div className="row three"><div className="metric"><span>Width X</span><strong>{meters(m.bounds.maxX - m.bounds.minX)} m</strong></div><div className="metric"><span>Height Y</span><strong>{meters(m.bounds.maxY - m.bounds.minY)} m</strong></div><div className="metric"><span>Depth Z</span><strong>{meters(m.bounds.maxZ - m.bounds.minZ)} m</strong></div></div>
+        <section className="subsection"><h3>3D bounds & connectors</h3><ThreeCanvas module={m} doorWidth={project.settings.doorWidth} doorHeight={project.settings.doorHeight} onPortChange={updatePort} onAddPort={point => updateModule(m.id, draft => { draft.ports.push({ id: uniqueId(draft.ports.map(p => p.id), 'port'), ...point, allowedTypeIds: null }) })} onError={setNotice} /></section>
+        <details className="subsection advanced-bounds"><summary>Advanced · adjust bounds relative to model origin</summary><div className="row two">{(['minX', 'maxX', 'minY', 'maxY', 'minZ', 'maxZ'] as const).map(key => <NumberField key={`${m.id}-${key}`} label={key} value={m.bounds[key] / 1000} step={0.001} suffix="m" validate={n => { const mm = toMm(n); const axis = key.slice(-1) as 'X' | 'Y' | 'Z'; const other = key.startsWith('min') ? m.bounds[`max${axis}`] : m.bounds[`min${axis}`]; return key.startsWith('min') ? mm >= other ? 'Minimum must be below maximum' : undefined : mm <= other ? 'Maximum must exceed minimum' : undefined }} onChange={n => setBounds(m.id, key, n)} />)}</div></details>
         <section className="subsection"><h3>Ports</h3>{m.ports.map(port => <PortEditor key={port.id} port={port} module={m} project={project} onChange={next => updatePort(port.id, next)} onDelete={() => updateModule(m.id, draft => { draft.ports = draft.ports.filter(p => p.id !== port.id) })} />)}{!m.ports.length && <p className="empty">Add a port on the canvas above.</p>}</section>
-        <SpawnEditor title="Items" rule={m.items} onChange={rule => updateModule(m.id, draft => { draft.items = rule })} /><SpawnEditor title="Enemies" rule={m.enemies} onChange={rule => updateModule(m.id, draft => { draft.enemies = rule })} />
       </FloatingWindow>
     })}
 

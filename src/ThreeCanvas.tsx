@@ -1,0 +1,240 @@
+import { useEffect, useRef, useState } from 'react'
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { nearestValidPort, portAtBoundary } from './geometry'
+import { previewDoors, rotatedBounds, type PreviewResult } from './generator'
+import type { Bounds, Module, Port, RuntimeProject } from './model'
+
+type PortPoint = Pick<Port, 'edge' | 'x' | 'y' | 'z'>
+type Props = {
+  module?: Module
+  project?: RuntimeProject
+  result?: PreviewResult
+  doorWidth: number
+  doorHeight: number
+  onPortChange?: (id: string, next: Port) => void
+  onAddPort?: (point: PortPoint) => void
+  onError?: (message: string) => void
+}
+type View = { scene: THREE.Scene; camera: THREE.PerspectiveCamera; controls: OrbitControls; renderer: THREE.WebGLRenderer; content: THREE.Group; box?: THREE.Mesh; picks: THREE.Object3D[]; bounds: THREE.Box3; frame: number; resize: ResizeObserver; fit: (box?: THREE.Box3) => void }
+
+const m = (millimetres: number) => millimetres / 1000
+function box3(b: Bounds): THREE.Box3 { return new THREE.Box3(new THREE.Vector3(m(b.minX), m(b.minY), m(b.minZ)), new THREE.Vector3(m(b.maxX), m(b.maxY), m(b.maxZ))) }
+function disposeTree(object: THREE.Object3D) {
+  object.traverse(child => {
+    if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments || child instanceof THREE.Sprite) {
+      child.geometry?.dispose()
+      const materials = Array.isArray(child.material) ? child.material : [child.material]
+      materials.forEach(material => { if (material instanceof THREE.SpriteMaterial) material.map?.dispose(); material?.dispose() })
+    }
+  })
+}
+function makeLabel(text: string): THREE.Sprite {
+  const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 96
+  const context = canvas.getContext('2d')!
+  context.fillStyle = '#071922dc'; context.fillRect(0, 0, 512, 96)
+  context.fillStyle = '#ffffff'; context.font = 'bold 42px sans-serif'; context.textAlign = 'center'; context.textBaseline = 'middle'
+  context.fillText(text, 256, 49, 490)
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false }))
+  sprite.scale.set(3.1, .58, 1); sprite.renderOrder = 8
+  return sprite
+}
+function addBox(group: THREE.Group, b: Bounds, color: string, id: string, pickable = false): THREE.Mesh {
+  const size = new THREE.Vector3(m(b.maxX - b.minX), m(b.maxY - b.minY), m(b.maxZ - b.minZ))
+  const geometry = new THREE.BoxGeometry(size.x, size.y, size.z)
+  const center = new THREE.Vector3(m((b.minX + b.maxX) / 2), m((b.minY + b.maxY) / 2), m((b.minZ + b.maxZ) / 2))
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: .23, side: THREE.DoubleSide, depthWrite: false }))
+  mesh.position.copy(center); mesh.userData = { id, box: pickable }; group.add(mesh)
+  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geometry), new THREE.LineBasicMaterial({ color, transparent: true, opacity: .95 }))
+  edges.position.copy(center); group.add(edges)
+  const label = makeLabel(id); label.position.set(center.x, m(b.maxY) + .5, center.z); group.add(label)
+  return mesh
+}
+function frame(port: PortPoint, width: number, height: number, connected: boolean, id?: string): THREE.Group {
+  const group = new THREE.Group()
+  group.position.set(m(port.x), m(port.y), m(port.z))
+  group.rotation.y = port.edge === 'E' ? Math.PI / 2 : port.edge === 'S' ? Math.PI : port.edge === 'W' ? -Math.PI / 2 : 0
+  group.translateZ(.008)
+  const w = m(width), h = m(height), points = [
+    -w / 2, -h / 2, 0, w / 2, -h / 2, 0,
+    w / 2, -h / 2, 0, w / 2, h / 2, 0,
+    w / 2, h / 2, 0, -w / 2, h / 2, 0,
+    -w / 2, h / 2, 0, -w / 2, -h / 2, 0,
+  ]
+  const outline = new THREE.BufferGeometry(); outline.setAttribute('position', new THREE.Float32BufferAttribute(points, 3))
+  group.add(new THREE.LineSegments(outline, new THREE.LineBasicMaterial({ color: connected ? 0xffffff : 0xffd89a, depthTest: false })))
+  if (!connected) {
+    const hatch: number[] = []
+    const step = Math.max(.12, Math.min(w, h) / 5)
+    for (let sum = -w / 2 - h / 2 + step; sum < w / 2 + h / 2; sum += step) {
+      const low = Math.max(-w / 2, sum - h / 2), high = Math.min(w / 2, sum + h / 2)
+      if (high > low) hatch.push(low, sum - low, .002, high, sum - high, .002)
+    }
+    const geometry = new THREE.BufferGeometry(); geometry.setAttribute('position', new THREE.Float32BufferAttribute(hatch, 3))
+    group.add(new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: 0xffd89a, transparent: true, opacity: .65, depthTest: false })))
+  }
+  if (id) {
+    const pick = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }))
+    pick.userData.portId = id; group.add(pick)
+  }
+  return group
+}
+
+export function ThreeCanvas(props: Props) {
+  const root = useRef<HTMLDivElement>(null)
+  const view = useRef<View | null>(null)
+  const current = useRef(props); current.current = props
+  const [placing, setPlacing] = useState(false)
+  const placingRef = useRef(false); placingRef.current = placing
+  const [selected, setSelected] = useState('')
+  const selectedRef = useRef(''); selectedRef.current = selected
+  const drag = useRef<{ id: string; point: PortPoint | null } | null>(null)
+  const ghost = useRef<THREE.Group | null>(null)
+  const selectedBox = useRef<THREE.Box3 | null>(null)
+  const lastFitSource = useRef<unknown>(null)
+
+  useEffect(() => {
+    const host = root.current!
+    const scene = new THREE.Scene(); scene.background = new THREE.Color('#091922')
+    const camera = new THREE.PerspectiveCamera(48, 1, .01, 100000)
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false }); renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); host.appendChild(renderer.domElement)
+    const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.dampingFactor = .08
+    controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN; controls.mouseButtons.RIGHT = THREE.MOUSE.PAN
+    const content = new THREE.Group(); scene.add(content)
+    const axes = new THREE.AxesHelper(2); scene.add(axes)
+    const state: View = { scene, camera, controls, renderer, content, picks: [], bounds: new THREE.Box3(), frame: 0, resize: null!, fit: () => {} }
+    state.fit = (target = state.bounds) => {
+      if (target.isEmpty()) return
+      const center = target.getCenter(new THREE.Vector3()), size = target.getSize(new THREE.Vector3())
+      const radius = Math.max(size.length() * .8, 2)
+      controls.target.copy(center); camera.position.copy(center).add(new THREE.Vector3(radius, radius * .75, radius)); camera.near = Math.max(.001, radius / 10000); camera.far = Math.max(1000, radius * 100); camera.updateProjectionMatrix(); controls.update()
+    }
+    const resize = () => { const width = Math.max(1, host.clientWidth), height = Math.max(1, host.clientHeight); renderer.setSize(width, height); camera.aspect = width / height; camera.updateProjectionMatrix() }
+    state.resize = new ResizeObserver(resize); state.resize.observe(host); resize()
+    const animate = () => { state.frame = requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera) }; animate()
+    view.current = state
+
+    const raycaster = new THREE.Raycaster(), pointer = new THREE.Vector2()
+    const cast = (event: PointerEvent, objects: THREE.Object3D[]) => {
+      const rect = renderer.domElement.getBoundingClientRect(); pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1)
+      raycaster.setFromCamera(pointer, camera); return raycaster.intersectObjects(objects, true)
+    }
+    const pointOnBox = (event: PointerEvent, nearest: boolean): PortPoint | null => {
+      const box = state.box, module = current.current.module
+      if (!box || !module) return null
+      const hit = cast(event, [box])[0]
+      if (!hit?.face) return null
+      const normal = hit.face.normal
+      if (Math.abs(normal.y) > .5) return null
+      const x = Math.round(hit.point.x * 1000), y = Math.round(hit.point.y * 1000), z = Math.round(hit.point.z * 1000)
+      return nearest
+        ? nearestValidPort(module.bounds, x, y, z, current.current.doorWidth, current.current.doorHeight)
+        : portAtBoundary(module.bounds, x, y, z, current.current.doorWidth, current.current.doorHeight, 3)
+    }
+    const showGhost = (point: PortPoint | null) => {
+      if (ghost.current) { state.scene.remove(ghost.current); disposeTree(ghost.current); ghost.current = null }
+      if (point) { ghost.current = frame(point, current.current.doorWidth, current.current.doorHeight, true); ghost.current.traverse(obj => { if (obj instanceof THREE.LineSegments) (obj.material as THREE.LineBasicMaterial).color.set('#91e6dc') }); state.scene.add(ghost.current) }
+    }
+    let down: { x: number; y: number } | null = null
+    const onDown = (event: PointerEvent) => {
+      host.focus()
+      if (event.button !== 0) return
+      down = { x: event.clientX, y: event.clientY }
+      if (current.current.module) {
+        if (!placingRef.current) {
+          const portHit = cast(event, state.picks).find(hit => hit.object.userData.portId)
+          if (portHit) { drag.current = { id: String(portHit.object.userData.portId), point: null }; controls.enabled = false; renderer.domElement.setPointerCapture(event.pointerId); event.stopPropagation(); event.preventDefault(); return }
+        }
+        if (placingRef.current) { controls.enabled = false; renderer.domElement.setPointerCapture(event.pointerId); event.stopPropagation(); event.preventDefault() }
+      }
+    }
+    const onMove = (event: PointerEvent) => {
+      if (drag.current || placingRef.current) {
+        const point = pointOnBox(event, !!drag.current)
+        if (drag.current) drag.current.point = point
+        showGhost(point)
+      }
+    }
+    const onUp = (event: PointerEvent) => {
+      controls.enabled = true
+      if (drag.current) {
+        const { id, point } = drag.current; drag.current = null; showGhost(null)
+        const original = current.current.module?.ports.find(port => port.id === id)
+        if (point && original) current.current.onPortChange?.(id, { ...original, ...point })
+        return
+      }
+      if (placingRef.current) {
+        const point = pointOnBox(event, false); showGhost(null)
+        if (point) { current.current.onAddPort?.(point); setPlacing(false) }
+        else current.current.onError?.('The full connector rectangle must fit on a vertical side face.')
+        return
+      }
+      if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) < 5 && current.current.result) {
+        const hit = cast(event, state.picks)[0]
+        if (hit?.object.userData.id) {
+          const id = String(hit.object.userData.id); setSelected(id)
+          const bounds = state.bounds.clone(); bounds.makeEmpty(); bounds.expandByObject(hit.object)
+          selectedBox.current = bounds
+        }
+      }
+      down = null
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && placingRef.current) { setPlacing(false); showGhost(null) }
+      if (event.key.toLowerCase() === 'f' && host.contains(document.activeElement)) { event.preventDefault(); state.fit(selectedBox.current ?? undefined) }
+    }
+    const onWheel = (event: WheelEvent) => event.preventDefault()
+    renderer.domElement.addEventListener('pointerdown', onDown, true)
+    renderer.domElement.addEventListener('pointermove', onMove)
+    renderer.domElement.addEventListener('pointerup', onUp)
+    renderer.domElement.addEventListener('pointercancel', onUp)
+    host.addEventListener('wheel', onWheel, { passive: false })
+    document.addEventListener('keydown', onKey)
+    return () => {
+      cancelAnimationFrame(state.frame); state.resize.disconnect(); controls.dispose()
+      renderer.domElement.removeEventListener('pointerdown', onDown, true); renderer.domElement.removeEventListener('pointermove', onMove); renderer.domElement.removeEventListener('pointerup', onUp); renderer.domElement.removeEventListener('pointercancel', onUp)
+      host.removeEventListener('wheel', onWheel); document.removeEventListener('keydown', onKey)
+      if (ghost.current) { state.scene.remove(ghost.current); disposeTree(ghost.current) }
+      disposeTree(content); scene.remove(content); renderer.dispose(); renderer.domElement.remove(); view.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    const state = view.current
+    if (!state) return
+    disposeTree(state.content); state.content.clear(); state.picks = []; state.box = undefined; state.bounds.makeEmpty()
+    const { module, project, result, doorWidth, doorHeight } = props
+    if (module) {
+      state.box = addBox(state.content, module.bounds, '#8ed6e5', module.id, true)
+      state.picks.push(state.box); state.bounds.copy(box3(module.bounds))
+      for (const port of module.ports) { const shape = frame(port, doorWidth, doorHeight, true, port.id); state.content.add(shape); state.picks.push(shape) }
+    } else if (project && result) {
+      const types = new Map(project.types.map(type => [type.id, type]))
+      const modules = new Map(project.modules.map(item => [item.id, item]))
+      for (const placement of result.placements) {
+        const module = modules.get(placement.moduleId)
+        if (!module) continue
+        const bounds = rotatedBounds(module.bounds, placement.rotation, placement.x, placement.y, placement.z)
+        const mesh = addBox(state.content, bounds, types.get(placement.typeId)?.color ?? '#91e6dc', `${placement.instanceId} · ${placement.moduleId} · Y ${m(placement.y).toFixed(3)} m`, true)
+        state.picks.push(mesh); state.bounds.union(box3(bounds))
+      }
+      for (const door of previewDoors(project, result.placements)) state.content.add(frame(door, door.width, door.height, door.connected))
+    }
+    if (selectedRef.current && result && !result.placements.some(p => p.instanceId === selectedRef.current)) { setSelected(''); selectedBox.current = null }
+    const fitSource = module ? `module:${module.id}` : result
+    if (lastFitSource.current !== fitSource && !state.bounds.isEmpty()) {
+      lastFitSource.current = fitSource; selectedBox.current = null
+      requestAnimationFrame(() => { if (view.current === state) state.fit() })
+    }
+  }, [props.module?.id, props.module?.bounds, props.module?.ports, props.project, props.result, props.doorWidth, props.doorHeight])
+
+  return <div className="three-canvas-shell">
+    <div className="three-canvas-toolbar">
+      {props.module && <button className={placing ? 'primary' : 'quiet'} onClick={() => setPlacing(value => !value)}>{placing ? 'Cancel placement' : '+ Add port'}</button>}
+      <button className="quiet" onClick={() => view.current?.fit(selectedBox.current ?? undefined)}>Fit</button>
+    </div>
+    <div className="three-canvas" ref={root} tabIndex={0} aria-label={props.module ? '3D module and connector editor' : '3D map preview'} />
+    <div className="three-canvas-help">Drag to orbit · Middle/right drag to pan · Wheel to zoom · F to focus{props.module ? ' · Drag a connector on the side face' : ''}</div>
+    {selected && props.result && <div className="three-selection">{selected}</div>}
+  </div>
+}

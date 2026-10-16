@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.invalid/dungeon-rules/v3",
-  "title": "Dungeon rules runtime JSON v3",
+  "$id": "https://example.invalid/dungeon-rules/v4",
+  "title": "Dungeon rules runtime JSON v4",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -13,7 +13,7 @@
   ],
   "properties": {
     "schemaVersion": {
-      "const": 3
+      "const": 4
     },
     "settings": {
       "type": "object",
@@ -21,7 +21,8 @@
       "required": [
         "modulesAfterStart",
         "startTypeId",
-        "doorWidth"
+        "doorWidth",
+        "doorHeight"
       ],
       "properties": {
         "modulesAfterStart": {
@@ -34,6 +35,11 @@
           "$ref": "#/$defs/id"
         },
         "doorWidth": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Millimetres; shared by all ports"
+        },
+        "doorHeight": {
           "type": "integer",
           "minimum": 1,
           "description": "Millimetres; shared by all ports"
@@ -65,49 +71,6 @@
       "type": "string",
       "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
     },
-    "spawnEntry": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "weight"
-      ],
-      "properties": {
-        "id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "weight": {
-          "type": "number",
-          "exclusiveMinimum": 0
-        }
-      }
-    },
-    "spawnRule": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "min",
-        "max",
-        "entries"
-      ],
-      "properties": {
-        "min": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "max": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "entries": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/spawnEntry"
-          }
-        }
-      }
-    },
     "moduleType": {
       "type": "object",
       "additionalProperties": false,
@@ -137,6 +100,8 @@
       "required": [
         "minX",
         "maxX",
+        "minY",
+        "maxY",
         "minZ",
         "maxZ"
       ],
@@ -152,6 +117,12 @@
         },
         "maxZ": {
           "type": "integer"
+        },
+        "minY": {
+          "type": "integer"
+        },
+        "maxY": {
+          "type": "integer"
         }
       }
     },
@@ -162,6 +133,7 @@
         "id",
         "edge",
         "x",
+        "y",
         "z",
         "allowedTypeIds"
       ],
@@ -197,6 +169,9 @@
             }
           ],
           "description": "null permits any related type; an array restricts target types"
+        },
+        "y": {
+          "type": "integer"
         }
       }
     },
@@ -207,9 +182,7 @@
         "id",
         "typeId",
         "bounds",
-        "ports",
-        "items",
-        "enemies"
+        "ports"
       ],
       "properties": {
         "id": {
@@ -226,12 +199,6 @@
           "items": {
             "$ref": "#/$defs/port"
           }
-        },
-        "items": {
-          "$ref": "#/$defs/spawnRule"
-        },
-        "enemies": {
-          "$ref": "#/$defs/spawnRule"
         }
       }
     },

@@ -1,6 +1,6 @@
 import { parseRuntime, type EditorState, type RuntimeProject } from './model'
 
-const DATABASE = 'dungeon-rule-editor-v2' // Reuse the database so its v2 draft can be cleared during the v3 upgrade.
+const DATABASE = 'dungeon-rule-editor-v2' // Upgrade the existing database and clear its unsupported v3 draft.
 const STATE = 'draft'
 const ASSETS = 'assets'
 export type Draft = { project: RuntimeProject; editor: EditorState; files: Map<string, File> }
@@ -14,7 +14,7 @@ function complete(tx: IDBTransaction): Promise<void> {
 }
 function database(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const open = indexedDB.open(DATABASE, 3)
+    const open = indexedDB.open(DATABASE, 4)
     open.onupgradeneeded = () => {
       if (!open.result.objectStoreNames.contains(STATE)) open.result.createObjectStore(STATE)
       if (!open.result.objectStoreNames.contains(ASSETS)) open.result.createObjectStore(ASSETS)
