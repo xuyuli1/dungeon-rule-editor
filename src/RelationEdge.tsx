@@ -7,9 +7,11 @@ function rectFor(node: ReturnType<typeof useInternalNode>): Rect | null {
   return { x: node.internals.positionAbsolute.x, y: node.internals.positionAbsolute.y, width: node.measured.width ?? 190, height: node.measured.height ?? 76 }
 }
 
-function boundary(rect: Rect, dx: number, dy: number) {
-  const cx = rect.x + rect.width / 2, cy = rect.y + rect.height / 2
-  const scale = Math.min(dx ? rect.width / 2 / Math.abs(dx) : Infinity, dy ? rect.height / 2 / Math.abs(dy) : Infinity)
+function boundary(rect: Rect, dx: number, dy: number, offsetX = 0, offsetY = 0) {
+  const cx = rect.x + rect.width / 2 + offsetX, cy = rect.y + rect.height / 2 + offsetY
+  const tx = dx > 0 ? (rect.x + rect.width - cx) / dx : dx < 0 ? (rect.x - cx) / dx : Infinity
+  const ty = dy > 0 ? (rect.y + rect.height - cy) / dy : dy < 0 ? (rect.y - cy) / dy : Infinity
+  const scale = Math.min(tx, ty)
   return { x: cx + dx * scale, y: cy + dy * scale }
 }
 
@@ -18,20 +20,20 @@ export function RelationEdge({ id, source, target, selected, style, data }: Edge
   const targetNode = useInternalNode(target)
   const a = rectFor(sourceNode), b = rectFor(targetNode)
   if (!a || !b) return null
-  const markerId = `relation-arrow-${source}-${target}`
+  const markerId = `relation-arrow-${source.length}-${source}-${target}`
   const color = String(style?.stroke ?? '#b8d9d7')
   const opacity = Number(style?.opacity ?? 1)
-  const weights = data as { weightAB?: number; weightBA?: number } | undefined
-  const label = (weight: number | undefined, x: number, y: number) => <text x={x} y={y} textAnchor="middle" dominantBaseline="middle" className="relation-weight" opacity={opacity} fill="#f4f8f6" stroke="#091922" strokeWidth="5" paintOrder="stroke" pointerEvents="none">{weight ?? 1}</text>
+  const { weight = 1, reverse = false } = (data ?? {}) as { weight?: number; reverse?: boolean }
+  const label = (x: number, y: number) => <g><rect x={x - 18} y={y - 11} width="36" height="22" fill="transparent" className="relation-label-hit" /><text x={x} y={y} textAnchor="middle" dominantBaseline="middle" className="relation-weight" opacity={opacity} fill="#f4f8f6" stroke="#091922" strokeWidth="5" paintOrder="stroke" pointerEvents="none">{weight}</text></g>
   const common = { fill: 'none', stroke: color, strokeWidth: selected ? 2.4 : 1.8, opacity, className: 'relation-stroke' }
+  const arrow = <defs><marker id={markerId} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill={color} /></marker></defs>
 
   if (source === target) {
     const left = a.x + a.width * .28, right = a.x + a.width * .72, top = a.y - 18
     const path = `M ${right} ${a.y} L ${right} ${top} L ${left} ${top} L ${left} ${a.y}`
-    return <g className="react-flow__edge-path-group" data-edge-id={id}>
-      <defs><marker id={markerId} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill={color} /></marker></defs>
-      <path d={path} {...common} markerEnd={`url(#${markerId})`} /><path d={path} fill="none" stroke="transparent" strokeWidth="20" className="relation-hit" />
-      {label(weights?.weightAB, a.x + a.width / 2, top + 2)}
+    return <g className="react-flow__edge-path-group" data-edge-id={id}>{arrow}
+      <path d={path} {...common} markerEnd={`url(#${markerId})`} /><path d={path} fill="none" stroke="transparent" strokeWidth="18" className="relation-hit" />
+      {label(a.x + a.width / 2, top - 7)}
     </g>
   }
 
@@ -39,17 +41,14 @@ export function RelationEdge({ id, source, target, selected, style, data }: Edge
   const bc = { x: b.x + b.width / 2, y: b.y + b.height / 2 }
   const dx = bc.x - ac.x, dy = bc.y - ac.y
   const length = Math.hypot(dx, dy) || 1
-  const start = boundary(a, dx, dy), end = boundary(b, -dx, -dy)
-  const nx = -dy / length * 6, ny = dx / length * 6
-  const forward = `M ${start.x + nx} ${start.y + ny} L ${end.x + nx} ${end.y + ny}`
-  const backward = `M ${end.x - nx} ${end.y - ny} L ${start.x - nx} ${start.y - ny}`
-  return <g className="react-flow__edge-path-group" data-edge-id={id}>
-    <defs><marker id={markerId} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill={color} /></marker></defs>
-    <path d={forward} {...common} markerEnd={`url(#${markerId})`} />
-    <path d={backward} {...common} markerEnd={`url(#${markerId})`} />
-    <path d={forward} fill="none" stroke="transparent" strokeWidth="18" className="relation-hit" />
-    <path d={backward} fill="none" stroke="transparent" strokeWidth="18" className="relation-hit" />
-    {label(weights?.weightAB, start.x + (end.x - start.x) * .42 + nx, start.y + (end.y - start.y) * .42 + ny)}
-    {label(weights?.weightBA, end.x + (start.x - end.x) * .42 - nx, end.y + (start.y - end.y) * .42 - ny)}
+  // Opposite arrows use opposite normals, so the same offset separates both tracks.
+  const nx = reverse ? -dy / length * 13 : 0, ny = reverse ? dx / length * 13 : 0
+  const start = boundary(a, dx, dy, nx, ny), end = boundary(b, -dx, -dy, nx, ny)
+  const x1 = start.x, y1 = start.y, x2 = end.x, y2 = end.y
+  const path = `M ${x1} ${y1} L ${x2} ${y2}`
+  return <g className="react-flow__edge-path-group" data-edge-id={id}>{arrow}
+    <path d={path} {...common} markerEnd={`url(#${markerId})`} />
+    <path d={path} fill="none" stroke="transparent" strokeWidth="16" className="relation-hit" />
+    {label(x1 + (x2 - x1) * .5, y1 + (y2 - y1) * .5 - 8)}
   </g>
 }

@@ -2,6 +2,7 @@ import { compareId, type Bounds, type Edge, type Module, type Point, type Runtim
 
 export type Placement = { instanceId: string; moduleId: string; typeId: string; x: number; z: number; rotation: 0 | 1 | 2 | 3; parent?: { instanceId: string; parentPortId: string; ownPortId: string } }
 export type SpawnMarker = { instanceId: string; kind: 'item' | 'enemy'; id: string; x: number; z: number }
+export type PreviewDoor = { instanceId: string; portId: string; connected: boolean; x1: number; z1: number; x2: number; z2: number }
 export type PreviewResult = { placements: Placement[]; markers: SpawnMarker[]; complete: boolean; seed: number; checks: number; restarts: number; targets: Record<string, number>; warnings: string[] }
 type Candidate = { parentIndex: number; parentPort: Port; child: Module; childPort: Port; rotation: 0 | 1 | 2 | 3; x: number; z: number; rank: number }
 type Progress = (result: PreviewResult) => void
@@ -33,6 +34,34 @@ export function rotatedBounds(bounds: Bounds, rotation: number, x = 0, z = 0): B
     rotate({ x: bounds.maxX, z: bounds.minZ }, rotation), rotate({ x: bounds.maxX, z: bounds.maxZ }, rotation),
   ]
   return { minX: Math.min(...corners.map(p => p.x)) + x, maxX: Math.max(...corners.map(p => p.x)) + x, minZ: Math.min(...corners.map(p => p.z)) + z, maxZ: Math.max(...corners.map(p => p.z)) + z }
+}
+export function previewDoors(project: RuntimeProject, placements: Placement[]): PreviewDoor[] {
+  const modules = new Map(project.modules.map(module => [module.id, module]))
+  const used = new Set<string>()
+  const childDoors = new Set<string>()
+  const key = (instanceId: string, portId: string) => `${instanceId}\u0000${portId}`
+  for (const placement of placements) if (placement.parent) {
+    used.add(key(placement.parent.instanceId, placement.parent.parentPortId))
+    const childKey = key(placement.instanceId, placement.parent.ownPortId)
+    used.add(childKey)
+    childDoors.add(childKey)
+  }
+  const doors: PreviewDoor[] = []
+  for (const placement of placements) {
+    const module = modules.get(placement.moduleId)
+    if (!module) continue
+    for (const port of module.ports) {
+      const portKey = key(placement.instanceId, port.id)
+      if (used.has(portKey) && !childDoors.has(portKey)) continue
+      const center = rotate(port, placement.rotation)
+      const tangent = rotate(port.edge === 'N' || port.edge === 'S' ? { x: 1, z: 0 } : { x: 0, z: 1 }, placement.rotation)
+      const half = project.settings.doorWidth / 2
+      doors.push({ instanceId: placement.instanceId, portId: port.id, connected: childDoors.has(portKey),
+        x1: placement.x + center.x - tangent.x * half, z1: placement.z + center.z - tangent.z * half,
+        x2: placement.x + center.x + tangent.x * half, z2: placement.z + center.z + tangent.z * half })
+    }
+  }
+  return doors
 }
 export function overlaps(a: Bounds, b: Bounds): boolean {
   return Math.min(a.maxX, b.maxX) > Math.max(a.minX, b.minX) && Math.min(a.maxZ, b.maxZ) > Math.max(a.minZ, b.minZ)
@@ -79,6 +108,7 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
   if (errors.length) throw new Error(errors.join('\n'))
   const rng = new XorShift32(seed)
   const targets = typeTargets(project)
+  const finalTotal = project.settings.modulesAfterStart + 1
   const moduleById = new Map(project.modules.map(m => [m.id, m]))
   const modulesByType = new Map(project.types.map(t => [t.id, project.modules.filter(m => m.typeId === t.id).sort((a, b) => compareId(a.id, b.id))]))
   const typeIds = project.types.map(t => t.id).sort()
@@ -90,7 +120,7 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
     const counts: Record<string, number> = {}
     for (const p of placements) counts[p.typeId] = (counts[p.typeId] ?? 0) + 1
     const requiredMissing = project.types.reduce((n, t) => n + Math.max(0, t.requiredMin - (counts[t.id] ?? 0)), 0)
-    const totalMissing = Math.max(0, project.settings.totalModules - placements.length)
+    const totalMissing = Math.max(0, finalTotal - placements.length)
     const typeDeviation = typeIds.reduce((n, id) => n + Math.abs((targets[id] ?? 0) - (counts[id] ?? 0)), 0)
     return [requiredMissing, totalMissing, typeDeviation]
   }
@@ -99,7 +129,7 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
     const counts: Record<string, number> = {}
     placements.forEach(p => { counts[p.typeId] = (counts[p.typeId] ?? 0) + 1 })
     const warnings = complete ? [] : [
-      `Placed ${placements.length}/${project.settings.totalModules} modules`,
+      `Placed ${placements.length}/${finalTotal} modules`,
       ...project.types.filter(t => (counts[t.id] ?? 0) < t.requiredMin).map(t => `${t.id}: required at least ${t.requiredMin}, placed ${counts[t.id] ?? 0}`),
       ...project.types.filter(t => (counts[t.id] ?? 0) !== targets[t.id]).map(t => `${t.id}: target ${targets[t.id]}, placed ${counts[t.id] ?? 0}`),
     ]
@@ -110,7 +140,7 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
     if (better(s, bestScore)) {
       best = placements.map(p => ({ ...p, parent: p.parent ? { ...p.parent } : undefined }))
       bestScore = s
-      if (onProgress) onProgress(result(best, best.length === project.settings.totalModules))
+      if (onProgress) onProgress(result(best, best.length === finalTotal))
     }
   }
   const weightedRank = (weight: number) => -Math.log(Math.max(rng.next(), 1 / 4294967296)) / weight
@@ -136,7 +166,7 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
     updateBest(placements)
 
     const search = (): boolean => {
-      if (placements.length === project.settings.totalModules) return true
+      if (placements.length === finalTotal) return true
       if (checks >= maxChecks) return false
       const candidates: Candidate[] = []
       const bagModules = [...bag].filter(([, count]) => count > 0).map(([id, count]) => ({ module: moduleById.get(id)!, count })).sort((a, b) => compareId(a.module.id, b.module.id))

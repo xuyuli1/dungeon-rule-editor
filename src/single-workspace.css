@@ -21,7 +21,7 @@
 .graph .react-flow__node { transition: opacity .18s, filter .18s; }
 .graph .react-flow__node.selected { box-shadow: 0 0 0 3px #e9f1ed55; }
 .graph .react-flow__edge { cursor: pointer; transition: opacity .18s; }
-.graph .react-flow__edge:hover .relation-stroke { stroke-width: 3; }
+.graph .react-flow__edge:hover .relation-stroke { stroke: #f4f8f6; }
 .relation-hit { cursor: pointer; }
 .targets-block { padding-top: 20px; }
 .targets-block h2 { margin: 0; font-size: 18px; }
@@ -155,6 +155,8 @@ input.default-value:not(:focus) { color: #899ba0; }
 .preview-interactive .preview-svg:active { cursor: grabbing; }
 .preview-tools { position: absolute; z-index: 2; right: 8px; top: 8px; display: flex; gap: 4px; }
 .preview-tools button { min-width: 32px; min-height: 30px; padding: 3px 8px; background: #172b34; }
+.door-legend { position: absolute; left: 10px; bottom: 9px; padding: 5px 8px; color: #d9e8e8; background: #091922d9; font: 10px var(--mono); letter-spacing: .05em; pointer-events: none; }
+.door-legend span { margin-left: 9px; }
 .marker-detail { position: absolute; bottom: 8px; left: 8px; right: 8px; display: flex; justify-content: space-between; gap: 10px; padding: 9px; border: 1px solid #7d9397; background: #102129ed; font: 11px var(--mono); }
 .marker-detail button { padding: 0 5px; border: 0; background: transparent; }
 .spawn-marker { cursor: pointer; }

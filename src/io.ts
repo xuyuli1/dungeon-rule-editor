@@ -11,7 +11,7 @@ export function download(blob: Blob, name: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 30000)
 }
 export function downloadJson(project: RuntimeProject): void {
-  download(new Blob([JSON.stringify(exportRules(project), null, 2)], { type: 'application/json' }), 'dungeon-rules.v2.json')
+  download(new Blob([JSON.stringify(exportRules(project), null, 2)], { type: 'application/json' }), 'dungeon-rules.v3.json')
 }
 export async function readJson(file: File): Promise<RuntimeProject> {
   return parseRuntime(JSON.parse(await file.text()))
@@ -33,7 +33,7 @@ export async function importFbx(file: File): Promise<Bounds> {
   if (bounds.minX >= bounds.maxX || bounds.minZ >= bounds.maxZ) throw new Error('Model has no X-Z footprint')
   return bounds
 }
-type SavedProject = { format: 'dungeon-editor-project'; version: 2; runtime: RuntimeProject; editor: EditorState; assets: Record<string, string> }
+type SavedProject = { format: 'dungeon-editor-project'; version: 3; runtime: RuntimeProject; editor: EditorState; assets: Record<string, string> }
 export async function buildProjectZip(project: RuntimeProject, editor: EditorState, files: Map<string, Blob>): Promise<Blob> {
   const { default: JSZip } = await import('jszip')
   const zip = new JSZip()
@@ -44,7 +44,7 @@ export async function buildProjectZip(project: RuntimeProject, editor: EditorSta
     assets[id] = path
     zip.file(path, file)
   }
-  const saved: SavedProject = { format: 'dungeon-editor-project', version: 2, runtime: project, editor, assets }
+  const saved: SavedProject = { format: 'dungeon-editor-project', version: 3, runtime: project, editor, assets }
   zip.file('project.json', JSON.stringify(saved, null, 2))
   return zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } })
 }
@@ -59,7 +59,7 @@ export async function openProject(file: File): Promise<{ project: RuntimeProject
   const raw: unknown = JSON.parse(await manifest.async('text'))
   if (!raw || typeof raw !== 'object') throw new Error('Invalid project format')
   const saved = raw as SavedProject
-  if (saved.format !== 'dungeon-editor-project' || saved.version !== 2) throw new Error(`Unsupported project version ${String(saved.version)}; this editor requires v2`)
+  if (saved.format !== 'dungeon-editor-project' || saved.version !== 3) throw new Error(`Unsupported project version ${String(saved.version)}; this editor requires v3`)
   const project = parseRuntime(saved.runtime)
   if (project.schemaVersion !== SCHEMA_VERSION) throw new Error('Runtime JSON version mismatch')
   const editor = saved.editor && typeof saved.editor === 'object' ? saved.editor : emptyEditor()

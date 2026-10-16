@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { nearestValidPort, portAtBoundary, unitsPerPixel } from './geometry'
-import { rotatedBounds, type PreviewResult, type SpawnMarker } from './generator'
+import { previewDoors, rotatedBounds, type PreviewResult, type SpawnMarker } from './generator'
 import { meters, type Module, type Port, type RuntimeProject, type WindowLayout } from './model'
 
 export function ModuleSlot({ module, selected }: { module: Module; selected: boolean }) {
@@ -17,20 +17,22 @@ export function ModuleSlot({ module, selected }: { module: Module; selected: boo
 
 export function FloatingWindow({ layout, title, onChange, onFocus, onClose, children }: { layout: WindowLayout; title: string; onChange: (next: WindowLayout) => void; onFocus: () => void; onClose: () => void; children: React.ReactNode }) {
   const pointer = useRef<{ x: number; y: number; original: WindowLayout; mode: 'move' | 'resize' } | null>(null)
+  const [screen, setScreen] = useState({ width: window.innerWidth, height: window.innerHeight })
+  useEffect(() => { const resize = () => setScreen({ width: window.innerWidth, height: window.innerHeight }); window.addEventListener('resize', resize); return () => window.removeEventListener('resize', resize) }, [])
   const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value))
   const move = (event: React.PointerEvent<HTMLElement>) => {
     const p = pointer.current
     if (!p) return
     const dx = event.clientX - p.x, dy = event.clientY - p.y
-    const screenW = window.innerWidth, screenH = window.innerHeight
+    const screenW = screen.width, screenH = screen.height
     if (p.mode === 'move') onChange({ ...layout, x: clamp(p.original.x + dx, 8, Math.max(8, screenW - Math.min(layout.width, screenW - 16))), y: clamp(p.original.y + dy, 8, Math.max(8, screenH - 50)) })
     else onChange({ ...layout, width: clamp(p.original.width + dx, 300, Math.max(300, screenW - p.original.x - 8)), height: clamp(p.original.height + dy, 240, Math.max(240, screenH - p.original.y - 8)) })
   }
   const start = (event: React.PointerEvent<HTMLElement>, mode: 'move' | 'resize') => { event.stopPropagation(); onFocus(); pointer.current = { x: event.clientX, y: event.clientY, original: { ...layout, x, y, width, height }, mode }; event.currentTarget.setPointerCapture(event.pointerId) }
-  const width = Math.min(layout.width, Math.max(280, window.innerWidth - 16))
-  const x = clamp(layout.x, 8, Math.max(8, window.innerWidth - width - 8))
-  const y = clamp(layout.y, 8, Math.max(8, window.innerHeight - 250))
-  const height = Math.min(layout.height, Math.max(240, window.innerHeight - y - 8))
+  const width = Math.min(layout.width, Math.max(280, screen.width - 16))
+  const x = clamp(layout.x, 8, Math.max(8, screen.width - width - 8))
+  const y = clamp(layout.y, 8, Math.max(8, screen.height - 250))
+  const height = Math.min(layout.height, Math.max(240, screen.height - y - 8))
   return <section className="floating-window" style={{ left: x, top: y, width, height, zIndex: layout.z }} onPointerDown={onFocus} aria-label={`${title} details`}>
     <header className="floating-title" onPointerDown={e => start(e, 'move')} onPointerMove={move} onPointerUp={() => { pointer.current = null }} onPointerCancel={() => { pointer.current = null }}><span>{title}</span><button className="icon" aria-label={`Close ${title}`} onPointerDown={e => e.stopPropagation()} onClick={onClose}>×</button></header>
     <div className="floating-body">{children}</div><div className="window-resize" role="button" aria-label={`Resize ${title}`} onPointerDown={e => start(e, 'resize')} onPointerMove={move} onPointerUp={() => { pointer.current = null }} onPointerCancel={() => { pointer.current = null }} />
@@ -76,6 +78,7 @@ export function PreviewCanvas({ project, result }: { project: RuntimeProject; re
   const modules = new Map(project.modules.map(m => [m.id, m]))
   const types = new Map(project.types.map(t => [t.id, t]))
   const boxes = result.placements.map(p => rotatedBounds(modules.get(p.moduleId)!.bounds, p.rotation, p.x, p.z))
+  const doors = previewDoors(project, result.placements)
   const minX = Math.min(...boxes.map(b => b.minX)), maxX = Math.max(...boxes.map(b => b.maxX)), minZ = Math.min(...boxes.map(b => b.minZ)), maxZ = Math.max(...boxes.map(b => b.maxZ))
   const pad = Math.max(maxX - minX, maxZ - minZ) * .12 + 1000
   const fitted = { x: minX - pad, y: -maxZ - pad, width: maxX - minX + pad * 2, height: maxZ - minZ + pad * 2 }
@@ -93,6 +96,7 @@ export function PreviewCanvas({ project, result }: { project: RuntimeProject; re
   return <div className="preview-interactive"><div className="preview-tools"><button aria-label="Zoom in" onClick={() => zoom(.8)}>+</button><button aria-label="Zoom out" onClick={() => zoom(1.25)}>−</button><button onClick={() => setView(fitted)}>Fit</button></div>
     <svg ref={svgRef} className="preview-svg" viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`} preserveAspectRatio="xMidYMid meet" onWheel={e => { e.preventDefault(); zoom(e.deltaY > 0 ? 1.1 : 1 / 1.1, e.clientX, e.clientY) }} onPointerDown={e => { if ((e.target as Element).closest('.spawn-marker')) return; drag.current = { x: e.clientX, y: e.clientY, view }; e.currentTarget.setPointerCapture(e.pointerId) }} onPointerMove={e => { const p = drag.current; const rect = svgRef.current?.getBoundingClientRect(); if (p && rect) setView({ ...p.view, x: p.view.x - (e.clientX - p.x) * p.view.width / rect.width, y: p.view.y - (e.clientY - p.y) * p.view.height / rect.height }) }} onPointerUp={() => { drag.current = null }} onPointerCancel={() => { drag.current = null }}>
       {result.placements.map((p, index) => { const b = boxes[index], color = types.get(p.typeId)?.color ?? '#65b9d4', font = Math.min(unit * 11, (b.maxX - b.minX) * .16); return <g key={p.instanceId}><rect x={b.minX} y={-b.maxZ} width={b.maxX - b.minX} height={b.maxZ - b.minZ} fill={color} fillOpacity=".24" stroke={color} strokeWidth={unit * 1.5} /><circle cx={p.x} cy={-p.z} r={unit * 2} fill={color} /><text x={(b.minX + b.maxX) / 2} y={-(b.minZ + b.maxZ) / 2} textAnchor="middle" dominantBaseline="middle" fill="#fff" fontSize={font} stroke="#071219" strokeWidth={unit * 2} paintOrder="stroke">{p.moduleId}</text></g> })}
+      {doors.map(door => <line key={`${door.instanceId}-${door.portId}`} x1={door.x1} y1={-door.z1} x2={door.x2} y2={-door.z2} stroke="#f4f8f6" strokeWidth={unit * 3} strokeDasharray={door.connected ? `${project.settings.doorWidth / 5} ${project.settings.doorWidth / 9}` : undefined} strokeLinecap="butt" pointerEvents="none" aria-hidden="true" />)}
       {result.markers.map((m, i) => { const box = placementById.get(m.instanceId)!, r = Math.min(unit * 5, Math.min(box.maxX - box.minX, box.maxZ - box.minZ) * .11); return <g key={`${m.instanceId}-${m.kind}-${i}`} className="spawn-marker" onClick={e => { e.stopPropagation(); setSelected(m) }}><title>{m.kind}: {m.id} · {m.instanceId}</title>{m.kind === 'item' ? <circle cx={m.x} cy={-m.z} r={r} fill="#fff" stroke="#071219" strokeWidth={r * .25} /> : <path d={`M ${m.x} ${-m.z - r * 1.2} l ${r * 1.15} ${r * 2.1} h ${-r * 2.3} Z`} fill="#ff9a80" stroke="#071219" strokeWidth={r * .25} />}</g> })}
-    </svg>{selected && <div className="marker-detail">{selected.kind.toUpperCase()} · {selected.id} · {selected.instanceId}<button onClick={() => setSelected(null)} aria-label="Close marker details">×</button></div>}</div>
+    </svg><div className="door-legend">SOLID · UNUSED <span>┄</span> DASHED · CONNECTED</div>{selected && <div className="marker-detail">{selected.kind.toUpperCase()} · {selected.id} · {selected.instanceId}<button onClick={() => setSelected(null)} aria-label="Close marker details">×</button></div>}</div>
 }

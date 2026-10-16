@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { canonicalConnection, emptyEditor, exampleProject, exportRules, parseRuntime, typeTargets, validateProject } from '../src/model'
-import { generate, overlaps, rotatedBounds, rotate } from '../src/generator'
+import { emptyEditor, exampleProject, exportRules, parseRuntime, typeTargets, validateProject } from '../src/model'
+import { generate, overlaps, previewDoors, rotatedBounds, rotate } from '../src/generator'
 import JSZip from 'jszip'
 import { buildProjectZip, fbxMetersPerUnit, openProject } from '../src/io'
 import { gridStep, nearestValidPort, portAtBoundary, remapPorts, unitsPerPixel } from '../src/geometry'
@@ -28,12 +28,11 @@ describe('rules and geometry', () => {
   })
   it('uses largest remainders and includes required counts in targets', () => {
     const p = exampleProject()
-    p.settings.totalModules = 13
-    p.types[0].percent = 60
-    p.types[1].percent = 10
+    p.settings.modulesAfterStart = 13
+    p.types[1].percent = 70
     p.types[2].percent = 30
-    expect(typeTargets(p)).toEqual({ entrance: 8, basic: 1, special: 4 })
-    p.types[0].requiredMin = 9
+    expect(typeTargets(p)).toEqual({ entrance: 1, basic: 9, special: 4 })
+    p.types[1].requiredMin = 10
     expect(validateProject(p).some(e => e.includes('exceeds its target'))).toBe(true)
   })
   it('rotates coordinates and accepts touching but not overlapping rectangles', () => {
@@ -50,6 +49,13 @@ describe('rules and geometry', () => {
     expect(a.complete).toBe(true)
     expect(a.placements).toEqual(b.placements)
     expect(a.placements).toHaveLength(10)
+    expect(a.placements.filter(v => v.typeId === p.settings.startTypeId)).toHaveLength(1)
+    const byId = new Map(a.placements.map(v => [v.instanceId, v]))
+    for (const placement of a.placements.slice(1)) {
+      expect(placement.parent).toBeDefined()
+      const parent = byId.get(placement.parent!.instanceId)!
+      expect(p.connections.some(c => c.from === parent.typeId && c.to === placement.typeId)).toBe(true)
+    }
     for (const type of p.types) expect(a.placements.filter(v => v.typeId === type.id)).toHaveLength(typeTargets(p)[type.id])
     for (let i = 0; i < a.placements.length; i++) for (let j = i + 1; j < a.placements.length; j++) {
       const x = a.placements[i], y = a.placements[j]
@@ -60,7 +66,7 @@ describe('rules and geometry', () => {
   })
   it('handles a 50-module preview sample within the search budget', () => {
     const p = exampleProject()
-    p.settings.totalModules = 50
+    p.settings.modulesAfterStart = 49
     const start = performance.now()
     const result = generate(p, 20261014)
     expect(result.complete).toBe(true)
@@ -69,10 +75,66 @@ describe('rules and geometry', () => {
   })
   it('returns a partial result when the connection graph cannot reach a type', () => {
     const p = exampleProject()
-    p.connections = [canonicalConnection('entrance', 'basic')]
+    p.connections = [{ from: 'entrance', to: 'basic', weight: 1 }]
     const result = generate(p, 12, undefined, 3000, 3)
     expect(result.complete).toBe(false)
     expect(result.warnings.some(w => w.includes('special'))).toBe(true)
+  })
+  it('allows branches from an earlier module but never grows against an arrow', () => {
+    const p = exampleProject()
+    p.settings.modulesAfterStart = 3
+    p.types.find(t => t.id === 'basic')!.percent = 100
+    p.types.find(t => t.id === 'special')!.percent = 0
+    p.connections = [{ from: 'entrance', to: 'basic', weight: 1 }]
+    const result = generate(p, 8)
+    expect(result.complete).toBe(true)
+    expect(result.placements.slice(1).every(v => v.parent?.instanceId === 'p0')).toBe(true)
+    p.connections = [{ from: 'basic', to: 'entrance', weight: 1 }]
+    expect(validateProject(p).some(e => e.includes('cannot point to the start'))).toBe(true)
+  })
+  it('follows the start, corridor, connector, room directed graph', () => {
+    const p = exampleProject()
+    p.settings.modulesAfterStart = 5
+    p.types = [
+      { id: 'start', color: '#bbbbbb', percent: 0, requiredMin: 0 },
+      { id: 'corridor', color: '#66bbee', percent: 40, requiredMin: 1 },
+      { id: 'connector', color: '#ddaa55', percent: 20, requiredMin: 0 },
+      { id: 'room', color: '#aa88cc', percent: 40, requiredMin: 1 },
+    ]
+    p.settings.startTypeId = 'start'
+    p.modules = ['start', 'corridor', 'connector', 'room'].map((typeId, index) => ({ ...structuredClone(p.modules[0]), id: `piece_${index}`, typeId }))
+    p.connections = [
+      { from: 'start', to: 'corridor', weight: 1 },
+      { from: 'corridor', to: 'room', weight: 3 },
+      { from: 'corridor', to: 'connector', weight: 1 },
+      { from: 'connector', to: 'corridor', weight: 1 },
+    ]
+    expect(validateProject(p)).toEqual([])
+    const result = generate(p, 124)
+    expect(result.complete).toBe(true)
+    expect(result.placements).toHaveLength(6)
+    expect(result.placements.filter(v => v.typeId === 'start')).toHaveLength(1)
+    const byId = new Map(result.placements.map(v => [v.instanceId, v]))
+    for (const child of result.placements.slice(1)) {
+      const parent = byId.get(child.parent!.instanceId)!
+      expect(p.connections.some(c => c.from === parent.typeId && c.to === child.typeId)).toBe(true)
+      expect(parent.typeId).not.toBe('room')
+    }
+  })
+  it('draws one dashed door for a joined pair and solid doors elsewhere, even after rotation', () => {
+    const p = exampleProject()
+    const placements = [
+      { instanceId: 'p0', moduleId: 'entry_a', typeId: 'entrance', x: 0, z: 0, rotation: 0 as const },
+      { instanceId: 'p1', moduleId: 'room_a', typeId: 'basic', x: 8000, z: 0, rotation: 1 as const, parent: { instanceId: 'p0', parentPortId: 'east', ownPortId: 'south' } },
+    ]
+    const doors = previewDoors(p, placements)
+    expect(doors).toHaveLength(7)
+    expect(doors.filter(d => d.connected)).toHaveLength(1)
+    expect(doors.filter(d => !d.connected)).toHaveLength(6)
+    const joined = doors.find(d => d.connected)!
+    expect((joined.x1 + joined.x2) / 2).toBe(4000)
+    expect((joined.z1 + joined.z2) / 2).toBe(0)
+    for (const door of doors) expect(Math.hypot(door.x2 - door.x1, door.z2 - door.z1)).toBe(p.settings.doorWidth)
   })
   it('separates editor display fields from the runtime JSON and imports it again', () => {
     const p = exampleProject()
@@ -86,15 +148,22 @@ describe('rules and geometry', () => {
   it('renames type references without reversing directional weights', () => {
     const project = exampleProject()
     const editor = { graphPositions: { entrance: { x: 30, y: 40 } }, modelNames: {}, windows: [{ kind: 'type' as const, id: 'entrance', x: 10, y: 20, width: 400, height: 500, z: 101 }], seed: 1 }
-    project.connections = [canonicalConnection('entrance', 'basic', 3, 1)]
+    project.connections = [{ from: 'entrance', to: 'basic', weight: 3 }, { from: 'basic', to: 'special', weight: 1 }]
     project.modules[1].ports[0].allowedTypeIds = ['entrance']
     const renamed = renameType(project, editor, 'entrance', 'z_entry')
     expect(renamed.project.settings.startTypeId).toBe('z_entry')
     expect(renamed.project.modules[0].typeId).toBe('z_entry')
     expect(renamed.editor.graphPositions.z_entry).toEqual({ x: 30, y: 40 })
-    expect(renamed.project.connections[0]).toEqual(canonicalConnection('z_entry', 'basic', 3, 1))
+    expect(renamed.project.connections[0]).toEqual({ from: 'z_entry', to: 'basic', weight: 3 })
+    expect(renamed.project.connections[1]).toEqual({ from: 'basic', to: 'special', weight: 1 })
     expect(renamed.project.modules[1].ports[0].allowedTypeIds).toEqual(['z_entry'])
     expect(renamed.editor.windows[0].id).toBe('z_entry')
+  })
+  it('keeps each direction and weight when a type ID changes', () => {
+    const project = exampleProject()
+    project.connections = [{ from: 'basic', to: 'special', weight: 3 }, { from: 'special', to: 'basic', weight: 1 }]
+    const renamed = renameType(project, emptyEditor(), 'basic', 'z_basic')
+    expect(renamed.project.connections).toEqual([{ from: 'z_basic', to: 'special', weight: 3 }, { from: 'special', to: 'z_basic', weight: 1 }])
   })
   it('stores rules, editor layout, and FBX bytes in the project ZIP', async () => {
     const p = exampleProject()
@@ -102,6 +171,7 @@ describe('rules and geometry', () => {
     const fbx = new Blob([new Uint8Array([1, 2, 3, 4])])
     const zip = await JSZip.loadAsync(await buildProjectZip(p, editor, new Map([['room_a', fbx]])))
     const saved = JSON.parse(await zip.file('project.json')!.async('text'))
+    expect(saved.version).toBe(3)
     expect(saved.runtime.modules).toHaveLength(p.modules.length)
     expect(saved.editor.graphPositions.basic).toEqual({ x: 20, y: 40 })
     expect(saved.editor.windows[0].id).toBe('room_a')
@@ -112,17 +182,27 @@ describe('rules and geometry', () => {
     expect(reopened.files.get('room_a')?.name).toBe('room_a.fbx')
     expect(reopened.editor.windows[0]).toEqual(editor.windows[0])
   })
-  it('exports v2 module spawns and port permissions and rejects v1', () => {
+  it('rejects a v2 project ZIP with an explicit version message', async () => {
+    const zip = await JSZip.loadAsync(await buildProjectZip(exampleProject(), emptyEditor(), new Map()))
+    const saved = JSON.parse(await zip.file('project.json')!.async('text'))
+    saved.version = 2
+    zip.file('project.json', JSON.stringify(saved))
+    const oldFile = new File([await zip.generateAsync({ type: 'blob' })], 'old.zip')
+    await expect(openProject(oldFile)).rejects.toThrow('requires v3')
+  })
+  it('exports v3 directed connections and module rules and rejects v2', () => {
     const project = exampleProject()
     project.modules[1].items = { min: 1, max: 2, entries: [{ id: 'loot', weight: 3 }] }
     project.modules[1].ports[0].allowedTypeIds = ['basic', 'special']
     const data = exportRules(project)
-    expect(data.schemaVersion).toBe(2)
+    expect(data.schemaVersion).toBe(3)
+    expect(data.settings.modulesAfterStart).toBe(9)
+    expect(data.connections[0]).toEqual({ from: 'entrance', to: 'basic', weight: 3 })
     expect(data.types[1]).not.toHaveProperty('items')
     expect(data.modules[1].items.min).toBe(1)
     expect(data.modules[1].ports[0].allowedTypeIds).toEqual(['basic', 'special'])
     expect(parseRuntime(data).modules[1].items.entries[0].id).toBe('loot')
-    expect(() => parseRuntime({ ...data, schemaVersion: 1 })).toThrow('requires v2')
+    expect(() => parseRuntime({ ...data, schemaVersion: 2 })).toThrow('requires v3')
   })
   it('requires both ports to permit the opposite type', () => {
     const project = exampleProject()
