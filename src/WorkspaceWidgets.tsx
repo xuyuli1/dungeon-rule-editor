@@ -72,6 +72,7 @@ export function ModuleCanvas({ module, doorWidth, onPortChange, onAddPort, onErr
 }
 
 export function PreviewCanvas({ project, result }: { project: RuntimeProject; result: PreviewResult }) {
+  const previewRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const drag = useRef<{ x: number; y: number; view: { x: number; y: number; width: number; height: number } } | null>(null)
   const [selected, setSelected] = useState<SpawnMarker | null>(null)
@@ -93,8 +94,18 @@ export function PreviewCanvas({ project, result }: { project: RuntimeProject; re
     const fy = clientY === undefined ? .5 : (clientY - rect.top) / rect.height
     setView(v => { const width = Math.max(100, Math.min(fitted.width * 20, v.width * factor)), height = Math.max(100, Math.min(fitted.height * 20, v.height * factor)); return { x: v.x + (v.width - width) * fx, y: v.y + (v.height - height) * fy, width, height } })
   }
-  return <div className="preview-interactive"><div className="preview-tools"><button aria-label="Zoom in" onClick={() => zoom(.8)}>+</button><button aria-label="Zoom out" onClick={() => zoom(1.25)}>−</button><button onClick={() => setView(fitted)}>Fit</button></div>
-    <svg ref={svgRef} className="preview-svg" viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`} preserveAspectRatio="xMidYMid meet" onWheel={e => { e.preventDefault(); zoom(e.deltaY > 0 ? 1.1 : 1 / 1.1, e.clientX, e.clientY) }} onPointerDown={e => { if ((e.target as Element).closest('.spawn-marker')) return; drag.current = { x: e.clientX, y: e.clientY, view }; e.currentTarget.setPointerCapture(e.pointerId) }} onPointerMove={e => { const p = drag.current; const rect = svgRef.current?.getBoundingClientRect(); if (p && rect) setView({ ...p.view, x: p.view.x - (e.clientX - p.x) * p.view.width / rect.width, y: p.view.y - (e.clientY - p.y) * p.view.height / rect.height }) }} onPointerUp={() => { drag.current = null }} onPointerCancel={() => { drag.current = null }}>
+  useEffect(() => {
+    const preview = previewRef.current
+    if (!preview) return
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      if (event.deltaY !== 0) zoom(event.deltaY > 0 ? 1.1 : 1 / 1.1, event.clientX, event.clientY)
+    }
+    preview.addEventListener('wheel', handleWheel, { passive: false })
+    return () => preview.removeEventListener('wheel', handleWheel)
+  }, [fitted.width, fitted.height])
+  return <div ref={previewRef} className="preview-interactive"><div className="preview-tools"><button aria-label="Zoom in" onClick={() => zoom(.8)}>+</button><button aria-label="Zoom out" onClick={() => zoom(1.25)}>−</button><button onClick={() => setView(fitted)}>Fit</button></div>
+    <svg ref={svgRef} className="preview-svg" viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`} preserveAspectRatio="xMidYMid meet" onPointerDown={e => { if ((e.target as Element).closest('.spawn-marker')) return; drag.current = { x: e.clientX, y: e.clientY, view }; e.currentTarget.setPointerCapture(e.pointerId) }} onPointerMove={e => { const p = drag.current; const rect = svgRef.current?.getBoundingClientRect(); if (p && rect) setView({ ...p.view, x: p.view.x - (e.clientX - p.x) * p.view.width / rect.width, y: p.view.y - (e.clientY - p.y) * p.view.height / rect.height }) }} onPointerUp={() => { drag.current = null }} onPointerCancel={() => { drag.current = null }}>
       {result.placements.map((p, index) => { const b = boxes[index], color = types.get(p.typeId)?.color ?? '#65b9d4', font = Math.min(unit * 11, (b.maxX - b.minX) * .16); return <g key={p.instanceId}><rect x={b.minX} y={-b.maxZ} width={b.maxX - b.minX} height={b.maxZ - b.minZ} fill={color} fillOpacity=".24" stroke={color} strokeWidth={unit * 1.5} /><circle cx={p.x} cy={-p.z} r={unit * 2} fill={color} /><text x={(b.minX + b.maxX) / 2} y={-(b.minZ + b.maxZ) / 2} textAnchor="middle" dominantBaseline="middle" fill="#fff" fontSize={font} stroke="#071219" strokeWidth={unit * 2} paintOrder="stroke">{p.moduleId}</text></g> })}
       {doors.map(door => <line key={`${door.instanceId}-${door.portId}`} x1={door.x1} y1={-door.z1} x2={door.x2} y2={-door.z2} stroke="#f4f8f6" strokeWidth={unit * 3} strokeDasharray={door.connected ? `${project.settings.doorWidth / 5} ${project.settings.doorWidth / 9}` : undefined} strokeLinecap="butt" pointerEvents="none" aria-hidden="true" />)}
       {result.markers.map((m, i) => { const box = placementById.get(m.instanceId)!, r = Math.min(unit * 5, Math.min(box.maxX - box.minX, box.maxZ - box.minZ) * .11); return <g key={`${m.instanceId}-${m.kind}-${i}`} className="spawn-marker" onClick={e => { e.stopPropagation(); setSelected(m) }}><title>{m.kind}: {m.id} · {m.instanceId}</title>{m.kind === 'item' ? <circle cx={m.x} cy={-m.z} r={r} fill="#fff" stroke="#071219" strokeWidth={r * .25} /> : <path d={`M ${m.x} ${-m.z - r * 1.2} l ${r * 1.15} ${r * 2.1} h ${-r * 2.3} Z`} fill="#ff9a80" stroke="#071219" strokeWidth={r * .25} />}</g> })}
