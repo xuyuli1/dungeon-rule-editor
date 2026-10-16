@@ -6,8 +6,18 @@ import { buildProjectZip, fbxMetersPerUnit, openProject } from '../src/io'
 import { gridStep, nearestValidPort, portAtBoundary, remapPorts, unitsPerPixel } from '../src/geometry'
 import { renameType } from '../src/editorActions'
 import { saveDraft } from '../src/autosave'
+import { nextTypeColor, typeColorSwatches } from '../src/typeColors'
 
 describe('rules and geometry', () => {
+  it('assigns distinct preset colors, then distinct generated colors', () => {
+    expect(nextTypeColor(['#E85D5D'])).toBe('#f28c5b')
+    const colorfulPresets = typeColorSwatches.slice(6)
+    const firstGenerated = nextTypeColor(colorfulPresets)
+    const secondGenerated = nextTypeColor([...colorfulPresets, firstGenerated])
+    expect(firstGenerated).toMatch(/^#[0-9a-f]{6}$/)
+    expect(secondGenerated).not.toBe(firstGenerated)
+    expect(nextTypeColor(colorfulPresets)).toBe(firstGenerated)
+  })
   it('converts FBX file units to metres and preserves relative port positions', () => {
     expect(fbxMetersPerUnit(1)).toBe(0.01)
     expect(fbxMetersPerUnit(100)).toBe(1)

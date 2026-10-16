@@ -8,15 +8,11 @@ import { type PreviewResult } from './generator'
 import { portAtBoundary, remapPorts } from './geometry'
 import { FloatingWindow, ModuleCanvas, ModuleSlot, PreviewCanvas } from './WorkspaceWidgets'
 import { clearDraft, loadDraft, saveDraft } from './autosave'
+import { nextTypeColor, typeColorSwatches } from './typeColors'
 
 type GraphMenu = { kind: 'pane' | 'node' | 'edge'; id?: string; x: number; y: number; flowX?: number; flowY?: number } | null
 type FbxMode = { kind: 'new'; typeId: string } | { kind: 'replace'; moduleId: string }
 const edgeNames: Record<Edge, string> = { N: 'North (+Z)', E: 'East (+X)', S: 'South (-Z)', W: 'West (-X)' }
-const typeColorSwatches = [
-  '#ffffff', '#d9e1e3', '#9aadb2', '#60747d', '#263943', '#000000',
-  '#e85d5d', '#f28c5b', '#e6b95d', '#a8c966', '#56bb87', '#54b9c2',
-  '#65b9d4', '#638ee7', '#8678dc', '#c987f0', '#d58a9b', '#ee81bb',
-]
 const relationEdgeTypes = { relation: RelationEdge }
 const newSpawn = (): SpawnRule => ({ min: 0, max: 0, entries: [] })
 const num = (value: string, fallback = 0) => value === '' ? fallback : Number(value)
@@ -98,6 +94,7 @@ export default function App() {
   const pressRef = useRef<{ timer: number; x: number; y: number } | null>(null)
   const fbxMode = useRef<FbxMode | null>(null)
   const [focusType, setFocusType] = useState('')
+  const [pendingNodeFocus, setPendingNodeFocus] = useState('')
   const flowRef = useRef<ReactFlowInstance | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -166,8 +163,8 @@ export default function App() {
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
   })
-  const openWindow = (kind: EditorState['windows'][number]['kind'], id: string) => { setEditor(current => { const maxZ = Math.max(100, ...current.windows.map(w => w.z)); const existing = current.windows.find(w => w.kind === kind && w.id === id); return { ...current, windows: existing ? current.windows.map(w => w === existing ? { ...w, z: maxZ + 1 } : w) : [...current.windows, { kind, id, x: Math.min(200 + current.windows.length * 28, Math.max(8, window.innerWidth - 450)), y: Math.min(100 + current.windows.length * 28, Math.max(8, window.innerHeight - 500)), width: kind === 'module' ? 600 : kind === 'type' ? 420 : 380, height: kind === 'module' ? 650 : kind === 'type' ? 540 : 260, z: maxZ + 1 }] } }); setGraphMenu(null) }
-  const openType = (id: string) => { setFocusType(id); setActiveRelationKey(''); openWindow('type', id) }
+  const openWindow = (kind: EditorState['windows'][number]['kind'], id: string, position?: { x: number; y: number }) => { setEditor(current => { const maxZ = Math.max(100, ...current.windows.map(w => w.z)); const existing = current.windows.find(w => w.kind === kind && w.id === id); return { ...current, windows: existing ? current.windows.map(w => w === existing ? { ...w, z: maxZ + 1 } : w) : [...current.windows, { kind, id, x: position?.x ?? Math.min(200 + current.windows.length * 28, Math.max(8, window.innerWidth - 450)), y: position?.y ?? Math.min(100 + current.windows.length * 28, Math.max(8, window.innerHeight - 500)), width: kind === 'module' ? 600 : kind === 'type' ? 420 : 380, height: kind === 'module' ? 650 : kind === 'type' ? 540 : 260, z: maxZ + 1 }] } }); setGraphMenu(null) }
+  const openType = (id: string, position?: { x: number; y: number }) => { setFocusType(id); setActiveRelationKey(''); openWindow('type', id, position) }
   const openModule = (id: string) => { setSelectedModule(id); const owner = project.modules.find(m => m.id === id); if (owner) setFocusType(owner.typeId); openWindow('module', id) }
   const updateWindow = (layout: EditorState['windows'][number]) => setEditor(current => ({ ...current, windows: current.windows.map(w => w.kind === layout.kind && w.id === layout.id ? layout : w) }))
   const focusWindow = (layout: EditorState['windows'][number]) => { const maxZ = Math.max(100, ...editor.windows.map(w => w.z)); if (layout.z < maxZ) updateWindow({ ...layout, z: maxZ + 1 }) }
@@ -183,10 +180,29 @@ export default function App() {
   const addType = () => {
     const id = newTypeId.trim()
     if (!isId(id) || project.types.some(t => t.id === id)) { setNotice('Enter a unique type ID. Start with a letter; use letters, numbers, _ or -.'); return }
-    mutate(draft => { draft.types.push({ id, color: '#65b9d4', percent: 0, requiredMin: 0 }); if (!draft.settings.startTypeId) draft.settings.startTypeId = id })
+    const color = nextTypeColor(project.types.map(type => type.color))
+    mutate(draft => { draft.types.push({ id, color, percent: 0, requiredMin: 0 }); if (!draft.settings.startTypeId) draft.settings.startTypeId = id })
     if (createPosition) setEditor(current => ({ ...current, graphPositions: { ...current.graphPositions, [id]: createPosition } }))
-    closeWindow('create-type', 'new'); openType(id); setNewTypeId(''); setCreatePosition(null)
+    const graphRect = graphRef.current?.getBoundingClientRect()
+    const windowPosition = graphRect && window.innerWidth - graphRect.right >= 450 ? { x: graphRect.right + 12, y: Math.max(8, Math.min(graphRect.top, window.innerHeight - 548)) } : undefined
+    closeWindow('create-type', 'new'); openType(id, windowPosition); setPendingNodeFocus(id); setNewTypeId(''); setCreatePosition(null)
   }
+  useEffect(() => {
+    if (!pendingNodeFocus) return
+    let frame = 0
+    let attempts = 0
+    const focus = () => {
+      const flow = flowRef.current
+      const node = flow?.getNode(pendingNodeFocus)
+      if (node?.measured?.width) {
+        void flow?.fitView({ nodes: [{ id: pendingNodeFocus }], padding: .4, maxZoom: 1, duration: 260 })
+        setPendingNodeFocus('')
+      } else if (attempts++ < 30) frame = window.requestAnimationFrame(focus)
+      else setPendingNodeFocus('')
+    }
+    frame = window.requestAnimationFrame(focus)
+    return () => window.cancelAnimationFrame(frame)
+  }, [pendingNodeFocus])
   const removeType = (id: string) => {
     const moduleCount = project.modules.filter(m => m.typeId === id).length
     const relationCount = project.connections.filter(c => c.from === id || c.to === id).length
@@ -249,10 +265,10 @@ export default function App() {
     if (project.connections.some(c => c.from === a && c.to === b)) { setNotice('This connection already exists'); return }
     mutate(draft => draft.connections.push({ from: a, to: b, weight: 1 }))
   }
-  const neighbors = new Set(project.connections.filter(c => c.from === focusType || c.to === focusType).flatMap(c => [c.from, c.to]))
+  const neighbors = new Set([focusType, ...project.connections.filter(c => c.from === focusType).map(c => c.to)])
   const graphColumns = Math.max(2, Math.ceil(Math.sqrt(project.types.length)))
-  const graphNodes: FlowNode[] = project.types.map((t, i) => ({ id: t.id, measured: { width: 370, height: project.modules.filter(m => m.typeId === t.id).length > 1 ? 320 : 220 }, position: editor.graphPositions[t.id] ?? { x: (i % graphColumns) * 470, y: Math.floor(i / graphColumns) * 480 }, data: { label: <div className="graph-node-content" onDoubleClick={e => { e.stopPropagation(); openType(t.id) }}><div className="graph-node-title"><strong>{t.id}</strong><button className="node-more nodrag nopan" aria-label={`Actions for ${t.id}`} onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); const rect = e.currentTarget.getBoundingClientRect(); showMenu('node', rect.right, rect.bottom, t.id) }}>⋯</button></div><span>{t.id === project.settings.startTypeId ? 'START · 1 module' : `${t.percent}% · ${targets[t.id] ?? 0} target`}</span><div className="node-modules nowheel nodrag nopan" onPointerDown={e => e.stopPropagation()}>{project.modules.filter(m => m.typeId === t.id).map(m => <button key={m.id} className="slot-button nodrag nopan" onClick={e => { e.stopPropagation(); openModule(m.id) }} onDoubleClick={e => e.stopPropagation()}><ModuleSlot module={m} selected={selectedModule === m.id} /></button>)}<div className="slot-add nodrag nopan" onDragOver={e => { e.preventDefault(); e.stopPropagation() }} onDrop={e => { e.preventDefault(); e.stopPropagation(); dropFbx(e, { kind: 'new', typeId: t.id }) }}><button className="nodrag nopan" onClick={e => { e.stopPropagation(); chooseFbx({ kind: 'new', typeId: t.id }) }}>+ Add module</button><small>Choose or drop FBX</small></div></div></div> }, className: focusType && !neighbors.has(t.id) ? 'graph-node-dim' : 'graph-node', style: { backgroundColor: '#1a2b33', backgroundImage: t.id === project.settings.startTypeId ? 'repeating-linear-gradient(135deg, #e8f4f21b 0 14px, transparent 14px 34px)' : undefined, color: '#f4f8f6', border: `2px solid ${t.color}`, borderRadius: 2, padding: 13, width: 370, height: project.modules.filter(m => m.typeId === t.id).length > 1 ? 320 : 220 }, selected: focusType === t.id }))
-  const graphEdges: FlowEdge[] = project.connections.map(c => ({ id: relationKey(c.from, c.to), source: c.from, target: c.to, type: 'relation', data: { weight: c.weight, reverse: project.connections.some(other => other.from === c.to && other.to === c.from) }, selected: activeRelationKey === relationKey(c.from, c.to), style: { stroke: '#b8d9d7', opacity: focusType && c.from !== focusType && c.to !== focusType ? .16 : 1 } }))
+  const graphNodes: FlowNode[] = project.types.map((t, i) => ({ id: t.id, measured: { width: 370, height: project.modules.filter(m => m.typeId === t.id).length > 1 ? 320 : 220 }, position: editor.graphPositions[t.id] ?? { x: (i % graphColumns) * 470, y: Math.floor(i / graphColumns) * 480 }, data: { label: <div className="graph-node-content" onDoubleClick={e => { e.stopPropagation(); openType(t.id) }}><div className="graph-node-title"><strong>{t.id}</strong><button className="node-more nodrag nopan" aria-label={`Actions for ${t.id}`} onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); const rect = e.currentTarget.getBoundingClientRect(); showMenu('node', rect.right, rect.bottom, t.id) }}>⋯</button></div><span>{t.id === project.settings.startTypeId ? 'START · 1 module' : `${t.percent}% · ${targets[t.id] ?? 0} target`}</span><div className="node-modules nowheel nodrag nopan" onPointerDown={e => e.stopPropagation()}>{project.modules.filter(m => m.typeId === t.id).map(m => <button key={m.id} className="slot-button nodrag nopan" onClick={e => { e.stopPropagation(); openModule(m.id) }} onDoubleClick={e => e.stopPropagation()}><ModuleSlot module={m} selected={selectedModule === m.id} /></button>)}<button type="button" className="slot-add nodrag nopan" onClick={e => { e.stopPropagation(); chooseFbx({ kind: 'new', typeId: t.id }) }} onDragOver={e => { e.preventDefault(); e.stopPropagation() }} onDrop={e => { e.preventDefault(); e.stopPropagation(); dropFbx(e, { kind: 'new', typeId: t.id }) }}><strong>+ Add module</strong><small>Choose or drop FBX</small></button></div></div> }, className: focusType && !neighbors.has(t.id) ? 'graph-node-dim' : 'graph-node', style: { backgroundColor: '#1a2b33', backgroundImage: t.id === project.settings.startTypeId ? 'repeating-linear-gradient(135deg, #e8f4f21b 0 14px, transparent 14px 34px)' : undefined, color: '#f4f8f6', border: `2px solid ${t.color}`, borderRadius: 2, padding: 13, width: 370, height: project.modules.filter(m => m.typeId === t.id).length > 1 ? 320 : 220 }, selected: focusType === t.id }))
+  const graphEdges: FlowEdge[] = project.connections.map(c => ({ id: relationKey(c.from, c.to), source: c.from, target: c.to, type: 'relation', data: { weight: c.weight, reverse: project.connections.some(other => other.from === c.to && other.to === c.from) }, selected: activeRelationKey === relationKey(c.from, c.to), style: { stroke: '#b8d9d7', opacity: focusType && c.from !== focusType ? .62 : 1 } }))
   const arrange = () => {
     const positions: Record<string, { x: number; y: number }> = {}
     let y = 0
@@ -342,7 +358,7 @@ export default function App() {
       </div>
     </main>
     {graphMenu && <><div className="context-dismiss" onPointerDown={() => setGraphMenu(null)} /><div className="graph-context-menu" role="menu" style={{ left: graphMenu.x, top: graphMenu.y }}>
-      {graphMenu.kind === 'pane' && <><button role="menuitem" onClick={() => { setCreatePosition(graphMenu.flowX === undefined ? null : { x: graphMenu.flowX, y: graphMenu.flowY ?? 0 }); setNewTypeId(''); openWindow('create-type', 'new'); setGraphMenu(null) }}>New type</button><button role="menuitem" onClick={() => { arrange(); setGraphMenu(null) }}>Arrange</button></>}
+      {graphMenu.kind === 'pane' && <><button role="menuitem" onClick={() => { setFocusType(''); setActiveRelationKey(''); setCreatePosition(graphMenu.flowX === undefined ? null : { x: graphMenu.flowX, y: graphMenu.flowY ?? 0 }); setNewTypeId(''); openWindow('create-type', 'new'); setGraphMenu(null) }}>New type</button><button role="menuitem" onClick={() => { arrange(); setGraphMenu(null) }}>Arrange</button></>}
       {graphMenu.kind === 'node' && <><button role="menuitem" onClick={() => openType(graphMenu.id!)}>Edit</button><button role="menuitem" onClick={() => { setConnectSource(graphMenu.id!); setPointer({ x: graphMenu.x, y: graphMenu.y }); setGraphMenu(null) }}>New connection</button><button role="menuitem" className="danger-text" onClick={() => removeType(graphMenu.id!)}>Delete type</button></>}
       {graphMenu.kind === 'edge' && <><button role="menuitem" onClick={() => openRelation(graphMenu.id!)}>Edit weights</button><button role="menuitem" className="danger-text" onClick={() => { mutate(d => { d.connections = d.connections.filter(c => relationKey(c.from, c.to) !== graphMenu.id) }); setGraphMenu(null); setActiveRelationKey('') }}>Delete connection</button></>}
     </div></>}
