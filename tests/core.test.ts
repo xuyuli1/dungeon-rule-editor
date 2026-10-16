@@ -4,6 +4,7 @@ import { generate, overlaps, rotatedBounds, rotate } from '../src/generator'
 import JSZip from 'jszip'
 import { buildProjectZip, fbxMetersPerUnit, openProject } from '../src/io'
 import { gridStep, remapPorts, unitsPerPixel } from '../src/geometry'
+import { renameType } from '../src/editorActions'
 
 describe('rules and geometry', () => {
   it('converts FBX file units to metres and preserves relative port positions', () => {
@@ -70,7 +71,7 @@ describe('rules and geometry', () => {
     p.connections = [canonicalConnection('entrance', 'basic')]
     const result = generate(p, 12, undefined, 3000, 3)
     expect(result.complete).toBe(false)
-    expect(result.warnings.some(w => w.includes('Special'))).toBe(true)
+    expect(result.warnings.some(w => w.includes('special'))).toBe(true)
   })
   it('separates editor display fields from the runtime JSON and imports it again', () => {
     const p = exampleProject()
@@ -79,7 +80,17 @@ describe('rules and geometry', () => {
     expect(exported.types[0]).not.toHaveProperty('name')
     const imported = parseRuntime(JSON.parse(JSON.stringify(exported)))
     expect(validateProject(imported)).toEqual([])
-    expect(imported.types[0].name).toBe('entrance')
+    expect(imported.types[0].id).toBe('entrance')
+  })
+  it('renames type references without reversing directional weights', () => {
+    const project = exampleProject()
+    const editor = { graphPositions: { entrance: { x: 30, y: 40 } }, modelNames: {} }
+    project.connections = [canonicalConnection('entrance', 'basic', 3, 1)]
+    const renamed = renameType(project, editor, 'entrance', 'z_entry')
+    expect(renamed.project.settings.startTypeId).toBe('z_entry')
+    expect(renamed.project.modules[0].typeId).toBe('z_entry')
+    expect(renamed.editor.graphPositions.z_entry).toEqual({ x: 30, y: 40 })
+    expect(renamed.project.connections[0]).toEqual(canonicalConnection('z_entry', 'basic', 3, 1))
   })
   it('stores rules, editor layout, and FBX bytes in the project ZIP', async () => {
     const p = exampleProject()

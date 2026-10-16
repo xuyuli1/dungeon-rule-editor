@@ -13,7 +13,7 @@ function boundary(rect: Rect, dx: number, dy: number) {
   return { x: cx + dx * scale, y: cy + dy * scale }
 }
 
-export function RelationEdge({ id, source, target, selected, style }: EdgeProps) {
+export function RelationEdge({ id, source, target, selected, style, data }: EdgeProps) {
   const sourceNode = useInternalNode(source)
   const targetNode = useInternalNode(target)
   const a = rectFor(sourceNode), b = rectFor(targetNode)
@@ -21,14 +21,17 @@ export function RelationEdge({ id, source, target, selected, style }: EdgeProps)
   const markerId = `relation-arrow-${source}-${target}`
   const color = String(style?.stroke ?? '#b8d9d7')
   const opacity = Number(style?.opacity ?? 1)
+  const weights = data as { weightAB?: number; weightBA?: number } | undefined
+  const label = (weight: number | undefined, x: number, y: number) => <text x={x} y={y} textAnchor="middle" dominantBaseline="middle" className="relation-weight" opacity={opacity} fill="#f4f8f6" stroke="#091922" strokeWidth="5" paintOrder="stroke" pointerEvents="none">{weight ?? 1}</text>
   const common = { fill: 'none', stroke: color, strokeWidth: selected ? 2.4 : 1.8, opacity, className: 'relation-stroke' }
 
   if (source === target) {
-    const x = a.x + a.width, y = a.y + a.height / 2
-    const path = `M ${x} ${y + 10} L ${x + 36} ${y + 10} L ${x + 36} ${y - a.height / 2 - 30} L ${x + a.width * -0.28} ${y - a.height / 2 - 30} L ${x + a.width * -0.28} ${a.y}`
+    const left = a.x + a.width * .28, right = a.x + a.width * .72, top = a.y - 30
+    const path = `M ${right} ${a.y} L ${right} ${top} L ${left} ${top} L ${left} ${a.y}`
     return <g className="react-flow__edge-path-group" data-edge-id={id}>
       <defs><marker id={markerId} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill={color} /></marker></defs>
       <path d={path} {...common} markerEnd={`url(#${markerId})`} /><path d={path} fill="none" stroke="transparent" strokeWidth="20" className="relation-hit" />
+      {label(weights?.weightAB, a.x + a.width / 2, top - 2)}
     </g>
   }
 
@@ -46,5 +49,7 @@ export function RelationEdge({ id, source, target, selected, style }: EdgeProps)
     <path d={backward} {...common} markerEnd={`url(#${markerId})`} />
     <path d={forward} fill="none" stroke="transparent" strokeWidth="18" className="relation-hit" />
     <path d={backward} fill="none" stroke="transparent" strokeWidth="18" className="relation-hit" />
+    {label(weights?.weightAB, start.x + (end.x - start.x) * .42 + nx, start.y + (end.y - start.y) * .42 + ny)}
+    {label(weights?.weightBA, end.x + (start.x - end.x) * .42 - nx, end.y + (start.y - end.y) * .42 - ny)}
   </g>
 }

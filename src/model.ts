@@ -7,7 +7,6 @@ export type SpawnEntry = { id: string; weight: number }
 export type SpawnRule = { min: number; max: number; entries: SpawnEntry[] }
 export type ModuleType = {
   id: string
-  name: string
   color: string
   percent: number
   requiredMin: number
@@ -23,7 +22,7 @@ export type RuntimeProject = {
   modules: Module[]
   connections: Connection[]
 }
-export type ExportedRules = Omit<RuntimeProject, 'types'> & { types: Omit<ModuleType, 'name' | 'color'>[] }
+export type ExportedRules = Omit<RuntimeProject, 'types'> & { types: Omit<ModuleType, 'color'>[] }
 export type EditorState = { graphPositions: Record<string, { x: number; y: number }>; modelNames: Record<string, string> }
 
 export const emptyProject = (): RuntimeProject => ({
@@ -72,25 +71,24 @@ export function validateProject(project: RuntimeProject): string[] {
     if (!isId(type.id)) errors.push(`Invalid type ID ${type.id || '(empty)'}: start with a letter; use letters, numbers, _ or -`)
     if (typeIds.has(type.id)) errors.push(`Duplicate type ID: ${type.id}`)
     typeIds.add(type.id)
-    if (!type.name.trim()) errors.push(`Type ${type.id} needs a name`)
     if (!/^#[0-9a-fA-F]{6}$/.test(type.color)) errors.push(`Type ${type.id} has an invalid color`)
     if (!finite(type.percent) || type.percent < 0 || type.percent > 100) errors.push(`Type ${type.id} share must be 0–100%`)
     if (!integer(type.requiredMin) || type.requiredMin < 0) errors.push(`Type ${type.id} has an invalid required minimum`)
     for (const [label, rule] of [['item', type.items], ['enemy', type.enemies]] as const) {
-      if (!integer(rule.min) || !integer(rule.max) || rule.min < 0 || rule.max < rule.min) errors.push(`${type.name} has an invalid ${label} count range`)
-      if (rule.max > 0 && !rule.entries.length) errors.push(`${type.name} needs at least one ${label} ID`)
+      if (!integer(rule.min) || !integer(rule.max) || rule.min < 0 || rule.max < rule.min) errors.push(`${type.id} has an invalid ${label} count range`)
+      if (rule.max > 0 && !rule.entries.length) errors.push(`${type.id} needs at least one ${label} ID`)
       const seen = new Set<string>()
       for (const entry of rule.entries) {
-        if (!entry.id.trim() || seen.has(entry.id)) errors.push(`${type.name} has an empty or duplicate ${label} ID`)
+        if (!entry.id.trim() || seen.has(entry.id)) errors.push(`${type.id} has an empty or duplicate ${label} ID`)
         seen.add(entry.id)
-        if (!finite(entry.weight) || entry.weight <= 0) errors.push(`${type.name} ${label} weight must be greater than zero`)
+        if (!finite(entry.weight) || entry.weight <= 0) errors.push(`${type.id} ${label} weight must be greater than zero`)
       }
     }
   }
   if (Math.abs(project.types.reduce((sum, t) => sum + t.percent, 0) - 100) > 0.000001) errors.push('Type shares must total 100%')
   if (!typeIds.has(startTypeId)) errors.push('Select a valid start type')
   const targets = typeTargets(project)
-  for (const type of project.types) if (type.requiredMin > (targets[type.id] ?? 0)) errors.push(`${type.name} required minimum ${type.requiredMin} exceeds its target ${targets[type.id] ?? 0}`)
+  for (const type of project.types) if (type.requiredMin > (targets[type.id] ?? 0)) errors.push(`${type.id} required minimum ${type.requiredMin} exceeds its target ${targets[type.id] ?? 0}`)
   if (startTypeId && (targets[startTypeId] ?? 0) < 1) errors.push('Start type needs at least one target slot')
   const moduleIds = new Set<string>()
   const modulesByType = new Map<string, number>()
@@ -115,7 +113,7 @@ export function validateProject(project: RuntimeProject): string[] {
       if (!valid) errors.push(`Port ${port.id} on module ${module.id} is off its edge or outside the bounds`)
     }
   }
-  for (const type of project.types) if ((targets[type.id] ?? 0) > 0 && !modulesByType.has(type.id)) errors.push(`Type ${type.name} has target slots but no modules`)
+  for (const type of project.types) if ((targets[type.id] ?? 0) > 0 && !modulesByType.has(type.id)) errors.push(`Type ${type.id} has target slots but no modules`)
   const relationKeys = new Set<string>()
   for (const c of project.connections) {
     if (!typeIds.has(c.a) || !typeIds.has(c.b)) errors.push('A connection references a missing type')
@@ -133,7 +131,6 @@ export function parseRuntime(value: unknown): RuntimeProject {
   if (typeof project.settings.totalModules !== 'number' || typeof project.settings.startTypeId !== 'string' || typeof project.settings.doorWidth !== 'number') throw new Error('Invalid map settings')
   for (const [index, t] of project.types.entries()) {
     if (!object(t) || typeof t.id !== 'string' || typeof t.percent !== 'number' || typeof t.requiredMin !== 'number') throw new Error('Invalid type data')
-    if (typeof t.name !== 'string') t.name = t.id
     if (typeof t.color !== 'string') t.color = ['#65b9d4', '#c987f0', '#efb565', '#83caa0', '#d58a9b'][index % 5]
     for (const rule of [t.items, t.enemies]) if (!object(rule) || typeof rule.min !== 'number' || typeof rule.max !== 'number' || !Array.isArray(rule.entries) || rule.entries.some((e: SpawnEntry) => !object(e) || typeof e.id !== 'string' || typeof e.weight !== 'number')) throw new Error('Invalid spawn rule')
   }
@@ -154,13 +151,13 @@ export function exportRules(project: RuntimeProject): ExportedRules {
 
 export function exampleProject(): RuntimeProject {
   const spawn = (): SpawnRule => ({ min: 0, max: 0, entries: [] })
-  const type = (id: string, name: string, color: string, percent: number, requiredMin: number): ModuleType => ({ id, name, color, percent, requiredMin, items: spawn(), enemies: spawn() })
+  const type = (id: string, color: string, percent: number, requiredMin: number): ModuleType => ({ id, color, percent, requiredMin, items: spawn(), enemies: spawn() })
   const bounds = { minX: -4000, maxX: 4000, minZ: -4000, maxZ: 4000 }
   const ports = (): Port[] => [{ id: 'north', edge: 'N', x: 0, z: 4000 }, { id: 'east', edge: 'E', x: 4000, z: 0 }, { id: 'south', edge: 'S', x: 0, z: -4000 }, { id: 'west', edge: 'W', x: -4000, z: 0 }]
   return {
     schemaVersion: SCHEMA_VERSION,
     settings: { totalModules: 10, startTypeId: 'entrance', doorWidth: 2000 },
-    types: [type('entrance', 'Entrance', '#c987f0', 20, 1), type('basic', 'Basic', '#65b9d4', 60, 0), type('special', 'Special', '#efb565', 20, 0)],
+    types: [type('entrance', '#c987f0', 20, 1), type('basic', '#65b9d4', 60, 0), type('special', '#efb565', 20, 0)],
     modules: [{ id: 'entry_a', typeId: 'entrance', bounds: { ...bounds }, ports: ports() }, { id: 'room_a', typeId: 'basic', bounds: { ...bounds }, ports: ports() }, { id: 'room_b', typeId: 'basic', bounds: { ...bounds }, ports: ports() }, { id: 'special_a', typeId: 'special', bounds: { ...bounds }, ports: ports() }],
     connections: [canonicalConnection('entrance', 'basic', 3, 3), canonicalConnection('basic', 'basic', 2, 2), canonicalConnection('basic', 'special', 1, 1)],
   }

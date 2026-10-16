@@ -65,8 +65,8 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
     placements.forEach(p => { counts[p.typeId] = (counts[p.typeId] ?? 0) + 1 })
     const warnings = complete ? [] : [
       `Placed ${placements.length}/${project.settings.totalModules} modules`,
-      ...project.types.filter(t => (counts[t.id] ?? 0) < t.requiredMin).map(t => `${t.name}: required at least ${t.requiredMin}, placed ${counts[t.id] ?? 0}`),
-      ...project.types.filter(t => (counts[t.id] ?? 0) !== targets[t.id]).map(t => `${t.name}: target ${targets[t.id]}, placed ${counts[t.id] ?? 0}`),
+      ...project.types.filter(t => (counts[t.id] ?? 0) < t.requiredMin).map(t => `${t.id}: required at least ${t.requiredMin}, placed ${counts[t.id] ?? 0}`),
+      ...project.types.filter(t => (counts[t.id] ?? 0) !== targets[t.id]).map(t => `${t.id}: target ${targets[t.id]}, placed ${counts[t.id] ?? 0}`),
     ]
     return { placements: placements.map(p => ({ ...p, parent: p.parent ? { ...p.parent } : undefined })), complete, seed: seed >>> 0, checks, restarts, targets, warnings }
   }
