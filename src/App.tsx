@@ -128,10 +128,10 @@ export default function App() {
 
   const errors = useMemo(() => validateProject(project), [project])
   const targets = useMemo(() => typeTargets(project), [project])
-  const mutate = useCallback((change: (draft: RuntimeProject) => void) => { setProject(current => { const next = structuredClone(current); change(next); return next }); setPreview(null) }, [])
+  const stopWorker = useCallback(() => { workerRef.current?.terminate(); workerRef.current = null; if (timeoutRef.current) window.clearTimeout(timeoutRef.current); timeoutRef.current = null; setGenerating(false) }, [])
+  const mutate = useCallback((change: (draft: RuntimeProject) => void) => { stopWorker(); setProject(current => { const next = structuredClone(current); change(next); return next }); setPreview(null) }, [stopWorker])
   const updateType = (id: string, change: (type: ModuleType) => void) => mutate(draft => { const target = draft.types.find(t => t.id === id); if (target) change(target) })
   const updateModule = (id: string, change: (module: Module) => void) => mutate(draft => { const target = draft.modules.find(m => m.id === id); if (target) change(target) })
-  const stopWorker = useCallback(() => { workerRef.current?.terminate(); workerRef.current = null; if (timeoutRef.current) window.clearTimeout(timeoutRef.current); timeoutRef.current = null; setGenerating(false) }, [])
   useEffect(() => () => { workerRef.current?.terminate(); if (timeoutRef.current) window.clearTimeout(timeoutRef.current) }, [])
   useEffect(() => { if (workerRef.current) stopWorker() }, [project, stopWorker])
   useEffect(() => {
@@ -216,6 +216,7 @@ export default function App() {
   }
   const commitTypeId = (oldId: string, nextId: string) => {
     const changed = renameType(project, editor, oldId, nextId)
+    stopWorker()
     setProject(changed.project); setEditor(changed.editor); setPreview(null)
     setFocusType(nextId); setActiveRelationKey('')
   }
@@ -297,14 +298,15 @@ export default function App() {
     workerRef.current = worker
     let latest: PreviewResult | null = null
     worker.onmessage = event => {
+      if (workerRef.current !== worker) return
       const message = event.data as { kind: string; result?: PreviewResult; message?: string }
       if (message.kind === 'progress' && message.result) { latest = message.result; setPreview(latest) }
       if (message.kind === 'done' && message.result) { setPreview(message.result); setNotice(message.result.complete ? 'All targets met' : 'No complete map found. Showing the best result.'); stopWorker() }
       if (message.kind === 'error') { setNotice(message.message ?? 'Generation failed'); stopWorker() }
     }
-    worker.onerror = event => { setNotice(event.message || 'Preview worker failed'); stopWorker() }
+    worker.onerror = event => { if (workerRef.current !== worker) return; setNotice(event.message || 'Preview worker failed'); stopWorker() }
     worker.postMessage({ project, seed: seed >>> 0 })
-    timeoutRef.current = window.setTimeout(() => { setPreview(latest); setNotice('Search reached the 10-second limit. Showing the best result.'); stopWorker() }, 10000)
+    timeoutRef.current = window.setTimeout(() => { if (workerRef.current !== worker) return; setPreview(latest); setNotice('Search reached the 10-second limit. Showing the best result.'); stopWorker() }, 10000)
   }
   useEffect(() => { if (hydrated && project.types.length && !errors.length) startPreview() }, [hydrated])
   const exportJson = () => {
