@@ -1,16 +1,17 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ReactFlow, Background, Controls, type Edge as FlowEdge, type Node as FlowNode, type ReactFlowInstance } from '@xyflow/react'
 import { RelationEdge } from './RelationEdge'
 import { renameType } from './editorActions'
 import { downloadJson, importFbx, openProject, readJson, saveProject } from './io'
 import { canonicalConnection, emptyEditor, emptyProject, exampleProject, isId, meters, pairKey, toMm, type Bounds, type Edge, type EditorState, type Module, type ModuleType, type Port, type RuntimeProject, type SpawnRule, validateProject, typeTargets } from './model'
-import { rotatedBounds, type PreviewResult } from './generator'
-import { gridStep, remapPorts, unitsPerPixel } from './geometry'
+import { type PreviewResult } from './generator'
+import { portAtBoundary, remapPorts } from './geometry'
+import { FloatingWindow, ModuleCanvas, ModuleSlot, PreviewCanvas } from './WorkspaceWidgets'
+import { clearDraft, loadDraft, saveDraft } from './autosave'
 
-type Drawer = { kind: 'type'; id: string } | { kind: 'module'; id: string } | { kind: 'create-type' } | null
+type Drawer = { kind: 'create-type' } | null
 type GraphMenu = { kind: 'pane' | 'node' | 'edge'; id?: string; x: number; y: number; flowX?: number; flowY?: number } | null
 type FbxMode = { kind: 'new'; typeId: string } | { kind: 'replace'; moduleId: string }
-const edges: Edge[] = ['N', 'E', 'S', 'W']
 const edgeNames: Record<Edge, string> = { N: 'North (+Z)', E: 'East (+X)', S: 'South (-Z)', W: 'West (-X)' }
 const relationEdgeTypes = { relation: RelationEdge }
 const newSpawn = (): SpawnRule => ({ min: 0, max: 0, entries: [] })
@@ -51,83 +52,41 @@ function SpawnEditor({ title, rule, onChange }: { title: string; rule: SpawnRule
   </section>
 }
 
-function ModuleCanvas({ module, doorWidth, onPortChange, onAddPort, onDeletePort }: { module: Module; doorWidth: number; onPortChange: (id: string, next: Port) => void; onAddPort: (edge: Edge) => void; onDeletePort: (id: string) => void }) {
-  const svgRef = useRef<SVGSVGElement>(null)
-  const [active, setActive] = useState<string | null>(null)
-  const [selectedEdge, setSelectedEdge] = useState<Edge>('N')
-  const b = module.bounds
-  const width = b.maxX - b.minX, depth = b.maxZ - b.minZ
-  const displayMinX = Math.min(b.minX, 0), displayMaxX = Math.max(b.maxX, 0)
-  const displayMinZ = Math.min(b.minZ, 0), displayMaxZ = Math.max(b.maxZ, 0)
-  const displayWidth = displayMaxX - displayMinX, displayDepth = displayMaxZ - displayMinZ
-  const pad = Math.max(displayWidth, displayDepth) * 0.18 + 500
-  const viewWidth = displayWidth + pad * 2, viewHeight = displayDepth + pad * 2
-  const viewBox = `${displayMinX - pad} ${-displayMaxZ - pad} ${viewWidth} ${viewHeight}`
-  const [pixelSize, setPixelSize] = useState({ width: 800, height: 380 })
-  useLayoutEffect(() => {
-    const svg = svgRef.current
-    if (!svg) return
-    const measure = () => { const rect = svg.getBoundingClientRect(); setPixelSize({ width: rect.width, height: rect.height }) }
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(svg)
-    return () => observer.disconnect()
-  }, [])
-  const unit = unitsPerPixel(viewWidth, viewHeight, pixelSize.width, pixelSize.height)
-  const step = gridStep(Math.max(width, depth))
-  const labelFontSize = Math.min(unit * 12, 4000)
-  const labelScale = unit * 12 / labelFontSize
-  const placePort = useCallback((port: Port, clientX: number, clientY: number) => {
-    const svg = svgRef.current
-    if (!svg) return
-    const point = svg.createSVGPoint(); point.x = clientX; point.y = clientY
-    const local = point.matrixTransform(svg.getScreenCTM()!.inverse())
-    const half = doorWidth / 2
-    const clamp = (v: number, lo: number, hi: number) => Math.round(Math.max(lo, Math.min(hi, v)))
-    const next = { ...port }
-    if (port.edge === 'N' || port.edge === 'S') { next.x = clamp(local.x, b.minX + half, b.maxX - half); next.z = port.edge === 'N' ? b.maxZ : b.minZ }
-    else { next.x = port.edge === 'E' ? b.maxX : b.minX; next.z = clamp(-local.y, b.minZ + half, b.maxZ - half) }
-    onPortChange(port.id, next)
-  }, [b, doorWidth, onPortChange])
-  return <div className="module-canvas"><div className="canvas-toolbar"><span>X →　Z ↑　meters</span><select value={selectedEdge} onChange={e => setSelectedEdge(e.target.value as Edge)}>{edges.map(edge => <option key={edge} value={edge}>{edgeNames[edge]}</option>)}</select><button onClick={() => onAddPort(selectedEdge)}>＋ Add port</button></div>
-    <svg ref={svgRef} viewBox={viewBox} className="module-svg" onPointerMove={e => { if (active) { const port = module.ports.find(p => p.id === active); if (port) placePort(port, e.clientX, e.clientY) } }} onPointerUp={() => setActive(null)} onPointerCancel={() => setActive(null)}>
-      <defs><pattern id="grid" width={step} height={step} patternUnits="userSpaceOnUse"><path d={`M ${step} 0 L 0 0 0 ${step}`} fill="none" stroke="#35474c" strokeWidth={unit} /></pattern></defs>
-      <rect x={displayMinX - pad} y={-displayMaxZ - pad} width={viewWidth} height={viewHeight} fill="url(#grid)" />
-      <rect x={b.minX} y={-b.maxZ} width={width} height={depth} fill="#172830" stroke="#e5eeeb" strokeWidth={unit * 2} />
-      <line x1={-unit * 8} y1="0" x2={unit * 8} y2="0" stroke="#e5eeeb" strokeWidth={unit * 2} /><line x1="0" y1={-unit * 8} x2="0" y2={unit * 8} stroke="#e5eeeb" strokeWidth={unit * 2} />
-      {module.ports.map(port => <g key={port.id} onPointerDown={e => { e.currentTarget.setPointerCapture(e.pointerId); setActive(port.id) }} onDoubleClick={() => onDeletePort(port.id)} className="port-handle">
-        <circle cx={port.x} cy={-port.z} r={unit * 15} fill="transparent" />
-        <circle cx={port.x} cy={-port.z} r={unit * 7} fill={active === port.id ? '#ffffff' : '#b8d9d7'} stroke="#071219" strokeWidth={unit * 2} pointerEvents="none" />
-        <text transform={`translate(${port.x + unit * 10} ${-port.z - unit * 10}) scale(${labelScale})`} fill="#f6faf8" fontSize={labelFontSize} paintOrder="stroke" stroke="#071219" strokeWidth={unit * 3 / labelScale} pointerEvents="none">{port.id}</text>
-      </g>)}
-    </svg><p className="hint">Drag a port along its edge. Double click to remove. The cross marks the model origin.</p>
-  </div>
+function PortEditor({ port, module, project, onChange, onDelete }: { port: Port; module: Module; project: RuntimeProject; onChange: (next: Port) => void; onDelete: () => void }) {
+  const [id, setId] = useState(port.id)
+  const [x, setX] = useState(meters(port.x))
+  const [z, setZ] = useState(meters(port.z))
+  const [error, setError] = useState('')
+  useEffect(() => { setId(port.id); setX(meters(port.x)); setZ(meters(port.z)); setError('') }, [port.id, port.x, port.z])
+  const commit = () => {
+    const nextId = id.trim()
+    if (!isId(nextId) || module.ports.some(p => p.id === nextId && p !== port)) { setError('Enter a unique port ID.'); return }
+    if (!/^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(x.trim()) || !/^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(z.trim())) { setError('Enter valid X and Z coordinates.'); return }
+    const placement = portAtBoundary(module.bounds, toMm(Number(x)), toMm(Number(z)), project.settings.doorWidth)
+    if (!placement) { setError('Point must lie on an edge and clear each corner by half the door width.'); return }
+    setError(''); onChange({ ...port, ...placement, id: nextId })
+  }
+  return <div className="port-editor"><div className="port-editor-head"><strong>{port.id}</strong><span>{edgeNames[port.edge]}</span><button className="icon danger" aria-label={`Remove port ${port.id}`} onClick={onDelete}>×</button></div><div className="row three"><Field label="Port ID"><input value={id} onChange={e => setId(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') commit() }} /></Field><Field label="Local X (m)"><input inputMode="decimal" value={x} onChange={e => setX(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') commit() }} /></Field><Field label="Local Z (m)"><input inputMode="decimal" value={z} onChange={e => setZ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') commit() }} /></Field></div><button className="quiet" onClick={commit}>Apply port details</button>
+    <div className="field"><span>Allowed target types</span><details className="type-multiselect"><summary>{port.allowedTypeIds === null ? 'Any related type' : port.allowedTypeIds.length ? port.allowedTypeIds.join(', ') : 'No target types'}</summary><div><button className="quiet" onClick={() => onChange({ ...port, allowedTypeIds: null })}>Any related type</button>{project.types.map(t => <label key={t.id}><input type="checkbox" checked={port.allowedTypeIds?.includes(t.id) ?? false} onChange={e => { const ids = e.target.checked ? [...(port.allowedTypeIds ?? []), t.id] : (port.allowedTypeIds ?? []).filter(id => id !== t.id); onChange({ ...port, allowedTypeIds: ids }) }} />{t.id}</label>)}</div></details></div><p className="hint">Both connected ports must accept the other module's type.</p>{error && <small className="field-error" role="alert">{error}</small>}</div>
 }
-
-function PreviewCanvas({ project, result }: { project: RuntimeProject; result: PreviewResult }) {
-  const moduleMap = new Map(project.modules.map(m => [m.id, m]))
-  const typeMap = new Map(project.types.map(t => [t.id, t]))
-  const boxes = result.placements.map(p => rotatedBounds(moduleMap.get(p.moduleId)!.bounds, p.rotation, p.x, p.z))
-  const minX = Math.min(...boxes.map(b => b.minX)), maxX = Math.max(...boxes.map(b => b.maxX))
-  const minZ = Math.min(...boxes.map(b => b.minZ)), maxZ = Math.max(...boxes.map(b => b.maxZ))
-  const pad = 4000
-  return <svg className="preview-svg" viewBox={`${minX - pad} ${-maxZ - pad} ${maxX - minX + 2 * pad} ${maxZ - minZ + 2 * pad}`} preserveAspectRatio="xMidYMid meet">
-    {result.placements.map((p, index) => { const b = boxes[index], color = typeMap.get(p.typeId)?.color ?? '#65b9d4'; return <g key={p.instanceId}>
-      <rect x={b.minX} y={-b.maxZ} width={b.maxX - b.minX} height={b.maxZ - b.minZ} fill={color} fillOpacity="0.24" stroke={color} strokeWidth="110" />
-      <circle cx={p.x} cy={-p.z} r="170" fill={color} />
-      <text x={(b.minX + b.maxX) / 2} y={-(b.minZ + b.maxZ) / 2} textAnchor="middle" dominantBaseline="middle" fill="#f4f8f6" fontSize="900" stroke="#071219" strokeWidth="170" paintOrder="stroke">{p.moduleId}</text>
-    </g> })}
-  </svg>
+function TypeIdInput({ type, project, onCommit }: { type: ModuleType; project: RuntimeProject; onCommit: (nextId: string) => void }) {
+  const [draft, setDraft] = useState(type.id)
+  const [error, setError] = useState('')
+  useEffect(() => { setDraft(type.id); setError('') }, [type.id])
+  const commit = () => { const next = draft.trim(); if (next === type.id) return; if (!isId(next) || project.types.some(t => t.id === next)) { setError('Type ID must be unique and start with a letter.'); return } setError(''); onCommit(next) }
+  return <Field label="Type ID"><input value={draft} onChange={e => { setDraft(e.target.value); setError('') }} onBlur={commit} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} />{error && <small className="field-error">{error}</small>}</Field>
 }
 
 export default function App() {
   const [project, setProject] = useState<RuntimeProject>(emptyProject)
   const [editor, setEditor] = useState<EditorState>(emptyEditor)
   const [files, setFiles] = useState<Map<string, File>>(new Map())
+  const [hydrated, setHydrated] = useState(false)
+  const [saveStatus, setSaveStatus] = useState<'Saving' | 'Saved' | 'Save failed'>('Saved')
+  const saveQueue = useRef<Promise<void>>(Promise.resolve())
+  const saveVersion = useRef(0)
   const [drawer, setDrawer] = useState<Drawer>(null)
-  const [typeTab, setTypeTab] = useState<'basics' | 'modules' | 'spawns'>('basics')
   const [activeRelationKey, setActiveRelationKey] = useState('')
-  const [typeIdDraft, setTypeIdDraft] = useState('')
   const [graphMenu, setGraphMenu] = useState<GraphMenu>(null)
   const [connectSource, setConnectSource] = useState('')
   const [pointer, setPointer] = useState({ x: 0, y: 0 })
@@ -140,10 +99,9 @@ export default function App() {
   const flowRef = useRef<ReactFlowInstance | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
-  const [selectedType, setSelectedType] = useState('')
   const [selectedModule, setSelectedModule] = useState('')
   const [newTypeId, setNewTypeId] = useState('')
-  const [seed, setSeed] = useState(() => Math.floor(Math.random() * 4294967295))
+  const [seed, setSeed] = useState(1)
   const [preview, setPreview] = useState<PreviewResult | null>(null)
   const [generating, setGenerating] = useState(false)
   const [notice, setNotice] = useState('')
@@ -154,11 +112,22 @@ export default function App() {
   const jsonInput = useRef<HTMLInputElement>(null)
   const fbxInput = useRef<HTMLInputElement>(null)
 
+  useEffect(() => {
+    let cancelled = false
+    loadDraft().then(saved => { if (!cancelled && saved) { setProject(saved.project); setEditor(saved.editor); setFiles(saved.files); setSeed(saved.editor.seed); setNotice('Local draft restored') } }).catch(error => { if (!cancelled) { setSaveStatus('Save failed'); setNotice(`Autosave failed: ${errorText(error)}`) } }).finally(() => { if (!cancelled) setHydrated(true) })
+    return () => { cancelled = true }
+  }, [])
+  useEffect(() => {
+    if (!hydrated) return
+    setSaveStatus('Saving')
+    const snapshot = { project, editor, files }
+    const version = ++saveVersion.current
+    saveQueue.current = saveQueue.current.catch(() => {}).then(() => saveDraft(snapshot)).then(() => { if (version === saveVersion.current) setSaveStatus('Saved') }).catch(error => { if (version === saveVersion.current) { setSaveStatus('Save failed'); setNotice(`Autosave failed: ${errorText(error)}. Use Save ZIP for a backup.`) } })
+  }, [project, editor, files, hydrated])
+  useEffect(() => { if (hydrated && editor.seed !== seed) setEditor(current => ({ ...current, seed })) }, [seed, hydrated])
+
   const errors = useMemo(() => validateProject(project), [project])
   const targets = useMemo(() => typeTargets(project), [project])
-  const type = project.types.find(t => t.id === selectedType)
-  const module = project.modules.find(m => m.id === selectedModule)
-  const relation = project.connections.find(c => pairKey(c.a, c.b) === activeRelationKey)
   const mutate = useCallback((change: (draft: RuntimeProject) => void) => { setProject(current => { const next = structuredClone(current); change(next); return next }); setPreview(null) }, [])
   const updateType = (id: string, change: (type: ModuleType) => void) => mutate(draft => { const target = draft.types.find(t => t.id === id); if (target) change(target) })
   const updateModule = (id: string, change: (module: Module) => void) => mutate(draft => { const target = draft.modules.find(m => m.id === id); if (target) change(target) })
@@ -208,19 +177,24 @@ export default function App() {
     document.addEventListener('keydown', trapFocus)
     return () => document.removeEventListener('keydown', trapFocus)
   }, [drawer])
-  const openType = (id: string, tab: 'basics' | 'modules' | 'spawns' = 'basics') => { setSelectedType(id); setFocusType(id); setTypeIdDraft(id); setTypeTab(tab); setActiveRelationKey(''); setGraphMenu(null); setDrawer({ kind: 'type', id }) }
+  const openWindow = (kind: 'type' | 'module', id: string) => { setEditor(current => { const maxZ = Math.max(100, ...current.windows.map(w => w.z)); const existing = current.windows.find(w => w.kind === kind && w.id === id); return { ...current, windows: existing ? current.windows.map(w => w === existing ? { ...w, z: maxZ + 1 } : w) : [...current.windows, { kind, id, x: Math.min(200 + current.windows.length * 28, Math.max(8, window.innerWidth - 450)), y: Math.min(100 + current.windows.length * 28, Math.max(8, window.innerHeight - 500)), width: kind === 'module' ? 600 : 420, height: kind === 'module' ? 650 : 540, z: maxZ + 1 }] } }); setGraphMenu(null) }
+  const openType = (id: string) => { setFocusType(id); setActiveRelationKey(''); openWindow('type', id) }
+  const openModule = (id: string) => { setSelectedModule(id); const owner = project.modules.find(m => m.id === id); if (owner) setFocusType(owner.typeId); openWindow('module', id) }
+  const updateWindow = (layout: EditorState['windows'][number]) => setEditor(current => ({ ...current, windows: current.windows.map(w => w.kind === layout.kind && w.id === layout.id ? layout : w) }))
+  const focusWindow = (layout: EditorState['windows'][number]) => { const maxZ = Math.max(100, ...editor.windows.map(w => w.z)); if (layout.z < maxZ) updateWindow({ ...layout, z: maxZ + 1 }) }
+  const closeWindow = (kind: 'type' | 'module', id: string) => setEditor(current => ({ ...current, windows: current.windows.filter(w => !(w.kind === kind && w.id === id)) }))
   const openRelation = (key: string) => { const target = project.connections.find(c => pairKey(c.a, c.b) === key); if (!target) return; openType(target.a); setActiveRelationKey(key) }
   const showMenu = (kind: 'pane' | 'node' | 'edge', x: number, y: number, id?: string) => {
     const point = flowRef.current?.screenToFlowPosition({ x, y })
     setGraphMenu({ kind, id, x: Math.min(x, window.innerWidth - 190), y: Math.min(y, window.innerHeight - 150), flowX: point?.x, flowY: point?.y })
   }
   const load = (next: RuntimeProject, nextEditor = emptyEditor(), nextFiles = new Map<string, File>()) => {
-    stopWorker(); setProject(next); setEditor(nextEditor); setFiles(nextFiles); setPreview(null); setSelectedType(next.types[0]?.id ?? ''); setSelectedModule(next.modules[0]?.id ?? ''); setFocusType(''); setDrawer(null); setGraphMenu(null); setConnectSource(''); setNotice('Project opened')
+    stopWorker(); setProject(next); setEditor(nextEditor); setSeed(nextEditor.seed); setFiles(nextFiles); setPreview(null); setSelectedModule(next.modules[0]?.id ?? ''); setFocusType(''); setDrawer(null); setGraphMenu(null); setConnectSource(''); setNotice('Project opened')
   }
   const addType = () => {
     const id = newTypeId.trim()
     if (!isId(id) || project.types.some(t => t.id === id)) { setNotice('Enter a unique type ID. Start with a letter; use letters, numbers, _ or -.'); return }
-    mutate(draft => { draft.types.push({ id, color: '#65b9d4', percent: 0, requiredMin: 0, items: newSpawn(), enemies: newSpawn() }); if (!draft.settings.startTypeId) draft.settings.startTypeId = id })
+    mutate(draft => { draft.types.push({ id, color: '#65b9d4', percent: 0, requiredMin: 0 }); if (!draft.settings.startTypeId) draft.settings.startTypeId = id })
     if (createPosition) setEditor(current => ({ ...current, graphPositions: { ...current.graphPositions, [id]: createPosition } }))
     openType(id); setNewTypeId(''); setCreatePosition(null)
   }
@@ -229,25 +203,21 @@ export default function App() {
     const relationCount = project.connections.filter(c => c.a === id || c.b === id).length
     if (!window.confirm(`Delete type ${id}, ${moduleCount} modules and ${relationCount} connections?`)) return
     const removedModuleIds = new Set(project.modules.filter(m => m.typeId === id).map(m => m.id))
-    mutate(draft => { draft.types = draft.types.filter(t => t.id !== id); draft.modules = draft.modules.filter(m => m.typeId !== id); draft.connections = draft.connections.filter(c => c.a !== id && c.b !== id); if (draft.settings.startTypeId === id) draft.settings.startTypeId = draft.types[0]?.id ?? '' })
+    mutate(draft => { draft.types = draft.types.filter(t => t.id !== id); draft.modules = draft.modules.filter(m => m.typeId !== id); draft.connections = draft.connections.filter(c => c.a !== id && c.b !== id); draft.modules.forEach(m => m.ports.forEach(p => { if (p.allowedTypeIds) p.allowedTypeIds = p.allowedTypeIds.filter(value => value !== id) })); if (draft.settings.startTypeId === id) draft.settings.startTypeId = draft.types[0]?.id ?? '' })
     setFiles(current => new Map([...current].filter(([moduleId]) => !removedModuleIds.has(moduleId))))
     setEditor(current => {
       const graphPositions = { ...current.graphPositions }, modelNames = { ...current.modelNames }
       delete graphPositions[id]
       removedModuleIds.forEach(moduleId => { delete modelNames[moduleId] })
-      return { ...current, graphPositions, modelNames }
+      return { ...current, graphPositions, modelNames, windows: current.windows.filter(w => !(w.kind === 'type' && w.id === id) && !(w.kind === 'module' && removedModuleIds.has(w.id))) }
     })
-    setSelectedType(project.types.find(t => t.id !== id)?.id ?? '')
     setSelectedModule(project.modules.find(m => m.typeId !== id)?.id ?? '')
     setFocusType(''); setDrawer(null); setGraphMenu(null); setConnectSource('')
   }
-  const commitTypeId = () => {
-    if (!type || typeIdDraft === type.id) return
-    const nextId = typeIdDraft.trim()
-    if (!isId(nextId) || project.types.some(t => t.id === nextId)) { setNotice('Type ID must be unique and start with a letter. Use letters, numbers, _ or -.'); setTypeIdDraft(type.id); return }
-    const changed = renameType(project, editor, type.id, nextId)
+  const commitTypeId = (oldId: string, nextId: string) => {
+    const changed = renameType(project, editor, oldId, nextId)
     setProject(changed.project); setEditor(changed.editor); setPreview(null)
-    setSelectedType(nextId); setFocusType(nextId); setDrawer({ kind: 'type', id: nextId }); setActiveRelationKey('')
+    setFocusType(nextId); setActiveRelationKey('')
   }
   const importModuleFile = async (file: File, mode: FbxMode) => {
     const id = file.name.replace(/\.fbx$/i, '')
@@ -257,7 +227,7 @@ export default function App() {
     try {
       const bounds = await importFbx(file)
       if (mode.kind === 'new') {
-        mutate(draft => draft.modules.push({ id, typeId: mode.typeId, bounds, ports: [] }))
+        mutate(draft => draft.modules.push({ id, typeId: mode.typeId, bounds, ports: [], items: newSpawn(), enemies: newSpawn() }))
       } else {
         const old = project.modules.find(m => m.id === oldId)
         if (!old) throw new Error('Module no longer exists')
@@ -269,8 +239,8 @@ export default function App() {
         })
       }
       setFiles(current => { const next = new Map(current); if (oldId) next.delete(oldId); next.set(id, file); return next })
-      setEditor(current => { const modelNames = { ...current.modelNames }; if (oldId) delete modelNames[oldId]; modelNames[id] = file.name; return { ...current, modelNames } })
-      setSelectedModule(id); setTypeTab('modules'); setDrawer({ kind: 'module', id }); setNotice(`Imported ${file.name}. Check bounds and ports.`)
+      setEditor(current => { const modelNames = { ...current.modelNames }; if (oldId) delete modelNames[oldId]; modelNames[id] = file.name; return { ...current, modelNames, windows: current.windows.map(w => oldId && w.kind === 'module' && w.id === oldId ? { ...w, id } : w) } })
+      openModule(id); setNotice(`Imported ${file.name}. Check bounds and ports.`)
     } catch (error) { setNotice(`Import failed: ${errorText(error)}`) }
   }
   const chooseFbx = (mode: FbxMode) => { fbxMode.current = mode; fbxInput.current?.click() }
@@ -281,7 +251,7 @@ export default function App() {
     setFiles(current => { const next = new Map(current); next.delete(id); return next })
     setEditor(current => { const modelNames = { ...current.modelNames }; delete modelNames[id]; return { ...current, modelNames } })
     setSelectedModule(project.modules.find(m => m.id !== id)?.id ?? '')
-    if (module) openType(module.typeId, 'modules'); else setDrawer(null)
+    closeWindow('module', id)
   }
   const addConnection = (a: string, b: string) => {
     if (!a || !b) return
@@ -290,15 +260,28 @@ export default function App() {
   }
   const neighbors = new Set(project.connections.filter(c => c.a === focusType || c.b === focusType).flatMap(c => [c.a, c.b]))
   const graphColumns = Math.max(2, Math.ceil(Math.sqrt(project.types.length)))
-  const graphNodes: FlowNode[] = project.types.map((t, i) => ({ id: t.id, position: editor.graphPositions[t.id] ?? { x: (i % graphColumns) * 260, y: Math.floor(i / graphColumns) * 160 }, data: { label: <div className="graph-node-content" onDoubleClick={e => { e.stopPropagation(); openType(t.id) }}><div className="graph-node-title"><strong>{t.id}</strong><button className="node-more nodrag nopan" aria-label={`Actions for ${t.id}`} title="Node actions" onClick={e => { e.stopPropagation(); const rect = e.currentTarget.getBoundingClientRect(); showMenu('node', rect.right, rect.bottom, t.id) }}>⋯</button></div><span>{t.percent}% · {targets[t.id] ?? 0} target · {project.modules.filter(m => m.typeId === t.id).length} defined</span></div> }, className: focusType && !neighbors.has(t.id) ? 'graph-node-dim' : 'graph-node', style: { background: '#1a2b33', color: '#f4f8f6', border: `2px solid ${t.color}`, borderRadius: 2, padding: 13, width: 190 }, selected: focusType === t.id }))
+  const graphNodes: FlowNode[] = project.types.map((t, i) => ({ id: t.id, position: editor.graphPositions[t.id] ?? { x: (i % graphColumns) * 470, y: Math.floor(i / graphColumns) * 480 }, data: { label: <div className="graph-node-content" onDoubleClick={e => { e.stopPropagation(); openType(t.id) }}><div className="graph-node-title"><strong>{t.id}</strong><button className="node-more nodrag nopan" aria-label={`Actions for ${t.id}`} onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); const rect = e.currentTarget.getBoundingClientRect(); showMenu('node', rect.right, rect.bottom, t.id) }}>⋯</button></div><span>{t.percent}% · {targets[t.id] ?? 0} target</span><div className="node-modules nowheel nodrag nopan" onPointerDown={e => e.stopPropagation()}>{project.modules.filter(m => m.typeId === t.id).map(m => <button key={m.id} className="slot-button nodrag nopan" onClick={e => { e.stopPropagation(); openModule(m.id) }} onDoubleClick={e => e.stopPropagation()}><ModuleSlot module={m} selected={selectedModule === m.id} /></button>)}<div className="slot-add nodrag nopan" onDragOver={e => { e.preventDefault(); e.stopPropagation() }} onDrop={e => { e.preventDefault(); e.stopPropagation(); dropFbx(e, { kind: 'new', typeId: t.id }) }}><button className="nodrag nopan" onClick={e => { e.stopPropagation(); chooseFbx({ kind: 'new', typeId: t.id }) }}>+ Add module</button><small>Choose or drop FBX</small></div></div></div> }, className: focusType && !neighbors.has(t.id) ? 'graph-node-dim' : 'graph-node', style: { background: '#1a2b33', color: '#f4f8f6', border: `2px solid ${t.color}`, borderRadius: 2, padding: 13, width: 370 }, selected: focusType === t.id }))
   const graphEdges: FlowEdge[] = project.connections.map(c => ({ id: pairKey(c.a, c.b), source: c.a, target: c.b, type: 'relation', data: { weightAB: c.weightAB, weightBA: c.weightBA }, selected: activeRelationKey === pairKey(c.a, c.b), style: { stroke: '#b8d9d7', opacity: focusType && c.a !== focusType && c.b !== focusType ? .16 : 1 } }))
   const arrange = () => {
-    setEditor(current => ({ ...current, graphPositions: Object.fromEntries(project.types.map((t, i) => [t.id, { x: (i % graphColumns) * 260, y: Math.floor(i / graphColumns) * 160 }])) }))
+    const positions: Record<string, { x: number; y: number }> = {}
+    let y = 0
+    for (let start = 0; start < project.types.length; start += graphColumns) {
+      const row = project.types.slice(start, start + graphColumns)
+      let x = 0
+      let rowHeight = 0
+      for (const t of row) {
+        const measured = flowRef.current?.getNode(t.id)?.measured
+        positions[t.id] = { x, y }
+        x += (measured?.width ?? 370) + 90
+        rowHeight = Math.max(rowHeight, measured?.height ?? 340)
+      }
+      y += rowHeight + 110
+    }
+    setEditor(current => ({ ...current, graphPositions: positions }))
     window.requestAnimationFrame(() => flowRef.current?.fitView({ padding: .24, duration: 260 }))
   }
-  const setBounds = (key: keyof Bounds, value: number) => {
-    if (!module) return
-    updateModule(module.id, m => {
+  const setBounds = (id: string, key: keyof Bounds, value: number) => {
+    updateModule(id, m => {
       m.bounds[key] = toMm(value)
       const b = m.bounds, half = project.settings.doorWidth / 2
       for (const p of m.ports) {
@@ -323,6 +306,7 @@ export default function App() {
     worker.postMessage({ project, seed: seed >>> 0 })
     timeoutRef.current = window.setTimeout(() => { setPreview(latest); setNotice('Search reached the 10-second limit. Showing the best result.'); stopWorker() }, 10000)
   }
+  useEffect(() => { if (hydrated && project.types.length && !errors.length) startPreview() }, [hydrated])
   const exportJson = () => {
     if (errors.length) { setNotice('Resolve validation errors first'); return }
     if (!preview?.complete && !window.confirm('The rules have not produced a complete preview. Export runtime JSON anyway?')) return
@@ -338,13 +322,13 @@ export default function App() {
   const clearLongPress = () => { if (pressRef.current) { window.clearTimeout(pressRef.current.timer); pressRef.current = null } }
   const previewNode = connectSource ? flowRef.current?.getNode(connectSource) : undefined
   const graphRect = graphRef.current?.getBoundingClientRect()
-  const previewPoint = previewNode && graphRect ? flowRef.current?.flowToScreenPosition({ x: previewNode.position.x + (previewNode.measured?.width ?? 190) / 2, y: previewNode.position.y + (previewNode.measured?.height ?? 76) / 2 }) : null
+  const previewPoint = previewNode && graphRect ? flowRef.current?.flowToScreenPosition({ x: previewNode.position.x + (previewNode.measured?.width ?? 370) / 2, y: previewNode.position.y + (previewNode.measured?.height ?? 340) / 2 }) : null
 
   return <div className="app-shell">
     <header className="topbar"><div className="file-menu" ref={menuRef}>
       <button className="menu-trigger" aria-label="File menu" title="File menu" aria-expanded={menuOpen} aria-controls="file-menu-panel" onClick={() => setMenuOpen(open => !open)}><span aria-hidden="true">{menuOpen ? '×' : '☰'}</span></button>
-      {menuOpen && <div id="file-menu-panel" className="menu-panel"><button onClick={() => { setMenuOpen(false); if (!project.types.length || window.confirm('Replace the current project with the example?')) load(exampleProject()) }}>Load example</button><button onClick={() => { setMenuOpen(false); projectInput.current?.click() }}>Open ZIP</button><button onClick={() => { setMenuOpen(false); jsonInput.current?.click() }}>Import JSON</button><button onClick={() => { setMenuOpen(false); saveProject(project, editor, files).then(() => setNotice('Project ZIP saved')).catch(e => setNotice(errorText(e))) }}>Save ZIP</button><button onClick={() => { setMenuOpen(false); exportJson() }}>Export JSON</button><div className="menu-meta">{project.types.length} TYPES · {project.modules.length} MODULES<br />V1 · X-Z PLANE · 1 UNIT = 1 M<br />FILES STAY IN THIS BROWSER</div></div>}
-    </div><input hidden type="file" accept=".zip" ref={projectInput} onChange={e => handleFile(e, 'project')} /><input hidden type="file" accept=".json" ref={jsonInput} onChange={e => handleFile(e, 'json')} /><input hidden type="file" accept=".fbx" ref={fbxInput} onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file && fbxMode.current) void importModuleFile(file, fbxMode.current) }} /></header>
+      {menuOpen && <div id="file-menu-panel" className="menu-panel"><button onClick={() => { setMenuOpen(false); if (window.confirm('Create a new project and clear the local draft? Save ZIP first if you need a backup.')) { void saveQueue.current.then(() => clearDraft()).then(() => load(emptyProject())).catch(error => setNotice(`New project failed: ${errorText(error)}`)) } }}>New project</button><button onClick={() => { setMenuOpen(false); if (!project.types.length || window.confirm('Replace the current project with the example?')) load(exampleProject()) }}>Load example</button><button onClick={() => { setMenuOpen(false); projectInput.current?.click() }}>Open ZIP</button><button onClick={() => { setMenuOpen(false); jsonInput.current?.click() }}>Import JSON</button><button onClick={() => { setMenuOpen(false); saveProject(project, editor, files).then(() => setNotice('Project ZIP saved')).catch(e => setNotice(errorText(e))) }}>Save ZIP</button><button onClick={() => { setMenuOpen(false); exportJson() }}>Export JSON</button><div className="menu-meta">{project.types.length} TYPES · {project.modules.length} MODULES<br />V2 · X-Z PLANE · 1 UNIT = 1 M<br />FILES STAY IN THIS BROWSER</div></div>}
+    </div><span className={`save-indicator ${saveStatus === 'Save failed' ? 'failed' : ''}`} role="status">{saveStatus}</span><input hidden type="file" accept=".zip" ref={projectInput} onChange={e => handleFile(e, 'project')} /><input hidden type="file" accept=".json" ref={jsonInput} onChange={e => handleFile(e, 'json')} /><input hidden type="file" accept=".fbx" ref={fbxInput} onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file && fbxMode.current) void importModuleFile(file, fbxMode.current) }} /></header>
     {notice && <div role={noticeIsError ? 'alert' : 'status'} className={`notice ${noticeIsError ? 'notice-error' : 'notice-success'}`}><span>{notice}</span><button aria-label="Dismiss notification" title="Dismiss" onClick={() => setNotice('')}>×</button></div>}
     <main className="editor-workspace">
       <section className="editor-panel rules-panel" aria-label="Rule network">
@@ -353,7 +337,7 @@ export default function App() {
         <div className="graph-head"><span>TYPE CONNECTIONS</span><span>Right click for actions · double click to edit</span></div>
         <div className="graph" ref={graphRef} tabIndex={0} aria-label="Type connection graph" onPointerMove={e => { setPointer({ x: e.clientX, y: e.clientY }); if (pressRef.current && Math.hypot(e.clientX - pressRef.current.x, e.clientY - pressRef.current.y) > 8) clearLongPress() }} onPointerUp={clearLongPress} onPointerCancel={clearLongPress} onPointerDownCapture={e => { if (e.pointerType !== 'touch') return; const x = e.clientX, y = e.clientY; const target = e.target as HTMLElement; const node = target.closest('.react-flow__node') as HTMLElement | null; const edge = target.closest('.react-flow__edge') as HTMLElement | null; clearLongPress(); pressRef.current = { x, y, timer: window.setTimeout(() => { showMenu(node ? 'node' : edge ? 'edge' : 'pane', x, y, node?.dataset.id ?? edge?.dataset.id); pressRef.current = null }, 500) } }}>
           <button className="graph-more" aria-label="Graph actions" title="Graph actions" onClick={e => { const rect = e.currentTarget.getBoundingClientRect(); showMenu('pane', rect.right, rect.bottom) }}>⋯</button>
-          <ReactFlow nodes={graphNodes} edges={graphEdges} edgeTypes={relationEdgeTypes} fitView fitViewOptions={{ padding: .24 }} minZoom={0.3} maxZoom={2} nodesConnectable={false} zoomOnDoubleClick={false} onInit={instance => { flowRef.current = instance }} onNodeClick={(_, node) => { setGraphMenu(null); if (connectSource) { addConnection(connectSource, node.id); setConnectSource(''); setFocusType(connectSource); return } setSelectedType(node.id); setFocusType(node.id) }} onNodeDoubleClick={(_, node) => { if (!connectSource) openType(node.id) }} onNodeContextMenu={(event, node) => { event.preventDefault(); setFocusType(node.id); showMenu('node', event.clientX, event.clientY, node.id) }} onEdgeClick={(_, edge) => { if (!connectSource) openRelation(edge.id) }} onEdgeContextMenu={(event, edge) => { event.preventDefault(); showMenu('edge', event.clientX, event.clientY, edge.id) }} onPaneClick={() => { setGraphMenu(null); setConnectSource(''); setFocusType('') }} onPaneContextMenu={event => { event.preventDefault(); showMenu('pane', event.clientX, event.clientY) }} onNodesChange={changes => { const moved: Record<string, { x: number; y: number }> = {}; for (const change of changes) if (change.type === 'position' && change.position) moved[change.id] = change.position; if (Object.keys(moved).length) setEditor(current => ({ ...current, graphPositions: { ...current.graphPositions, ...moved } })) }}><Background color="#415962" gap={24} size={1} /><Controls /></ReactFlow>
+          <ReactFlow nodes={graphNodes} edges={graphEdges} edgeTypes={relationEdgeTypes} fitView fitViewOptions={{ padding: .24 }} minZoom={0.3} maxZoom={2} nodesConnectable={false} zoomOnDoubleClick={false} onInit={instance => { flowRef.current = instance }} onNodeClick={(_, node) => { setGraphMenu(null); if (connectSource) { addConnection(connectSource, node.id); setConnectSource(''); setFocusType(connectSource); return } setFocusType(node.id) }} onNodeDoubleClick={(_, node) => { if (!connectSource) openType(node.id) }} onNodeContextMenu={(event, node) => { event.preventDefault(); setFocusType(node.id); showMenu('node', event.clientX, event.clientY, node.id) }} onEdgeClick={(_, edge) => { if (!connectSource) openRelation(edge.id) }} onEdgeContextMenu={(event, edge) => { event.preventDefault(); showMenu('edge', event.clientX, event.clientY, edge.id) }} onPaneClick={() => { setGraphMenu(null); setConnectSource(''); setFocusType('') }} onPaneContextMenu={event => { event.preventDefault(); showMenu('pane', event.clientX, event.clientY) }} onNodesChange={changes => { const moved: Record<string, { x: number; y: number }> = {}; for (const change of changes) if (change.type === 'position' && change.position) moved[change.id] = change.position; if (Object.keys(moved).length) setEditor(current => ({ ...current, graphPositions: { ...current.graphPositions, ...moved } })) }}><Background color="#415962" gap={24} size={1} /><Controls /></ReactFlow>
           {connectSource && previewPoint && graphRect && <svg className="connection-preview" aria-hidden="true"><line x1={previewPoint.x - graphRect.left} y1={previewPoint.y - graphRect.top} x2={pointer.x - graphRect.left} y2={pointer.y - graphRect.top} /></svg>}
           {connectSource && <div className="connect-hint">Select a target node · Esc to cancel</div>}
         </div>
@@ -370,16 +354,34 @@ export default function App() {
       {graphMenu.kind === 'node' && <><button role="menuitem" onClick={() => openType(graphMenu.id!)}>Edit</button><button role="menuitem" onClick={() => { setConnectSource(graphMenu.id!); setPointer({ x: graphMenu.x, y: graphMenu.y }); setGraphMenu(null); setDrawer(null) }}>New connection</button><button role="menuitem" className="danger-text" onClick={() => removeType(graphMenu.id!)}>Delete type</button></>}
       {graphMenu.kind === 'edge' && <><button role="menuitem" onClick={() => openRelation(graphMenu.id!)}>Edit weights</button><button role="menuitem" className="danger-text" onClick={() => { mutate(d => { d.connections = d.connections.filter(c => pairKey(c.a, c.b) !== graphMenu.id) }); setGraphMenu(null); setActiveRelationKey('') }}>Delete connection</button></>}
     </div></>}
-    {drawer && <div className="modal-backdrop" onPointerDown={e => { if (e.target === e.currentTarget) setDrawer(null) }}><section className="editor-modal" ref={modalRef} role="dialog" aria-modal="true" aria-label={drawer.kind === 'create-type' ? 'New type' : drawer.kind === 'module' ? 'Module details' : 'Type details'}>
-      <div className="modal-top"><span>DETAILS</span><button className="icon" aria-label="Close details" onClick={() => setDrawer(null)}>×</button></div>
-      {drawer.kind === 'create-type' && <div className="modal-body"><h2>New type</h2><Field label="Type ID"><input autoFocus placeholder="e.g. entrance" value={newTypeId} onChange={e => setNewTypeId(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addType() }} /></Field><button className="primary full-width" onClick={addType}>Create type</button></div>}
-      {(drawer.kind === 'type' || drawer.kind === 'module') && type && <><div className="modal-title"><h2>{type.id}</h2><nav className="detail-tabs" aria-label="Type details tabs"><button className={typeTab === 'basics' ? 'active' : ''} onClick={() => { setTypeTab('basics'); setDrawer({ kind: 'type', id: type.id }) }}>Basics & connections</button><button className={typeTab === 'modules' ? 'active' : ''} onClick={() => { setTypeTab('modules'); setDrawer({ kind: 'type', id: type.id }) }}>Modules</button><button className={typeTab === 'spawns' ? 'active' : ''} onClick={() => { setTypeTab('spawns'); setDrawer({ kind: 'type', id: type.id }) }}>Items & enemies</button></nav></div><div className="modal-body">
-        {typeTab === 'basics' && <><div className="row two"><Field label="Type ID"><input value={typeIdDraft} onChange={e => setTypeIdDraft(e.target.value)} onBlur={commitTypeId} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} /></Field><Field label="Color"><input type="color" value={type.color} onChange={e => updateType(type.id, t => { t.color = e.target.value })} /></Field></div><NumberField label="Share of map modules (%)" value={type.percent} min={0} max={100} step={0.1} suffix="%" onChange={n => updateType(type.id, t => { t.percent = n })} /><p className="hint target-explainer">{type.percent}% → {targets[type.id] ?? 0} of {project.settings.totalModules} modules in the map</p><NumberField label="Required minimum" value={type.requiredMin} min={0} defaultValue={0} onChange={n => updateType(type.id, t => { t.requiredMin = n })} /><p className="hint">Included in the target count above.</p>
-          <section className="subsection"><div className="section-head"><h3>Connections</h3><button className="quiet" onClick={() => { setConnectSource(type.id); setDrawer(null) }}>New connection</button></div>{project.connections.filter(c => c.a === type.id || c.b === type.id).map(c => <button className={activeRelationKey === pairKey(c.a, c.b) ? 'list-item selected' : 'list-item'} key={pairKey(c.a, c.b)} onClick={() => setActiveRelationKey(pairKey(c.a, c.b))}>{c.a === c.b ? `${type.id} ↻ self` : `${c.a} ↔ ${c.b}`}<small>{c.a === c.b ? `↻ ${c.weightAB}` : `→ ${c.weightAB} · ← ${c.weightBA}`}</small></button>)}{!project.connections.some(c => c.a === type.id || c.b === type.id) && <p className="empty">No connections yet.</p>}{relation && <div className="relation-editor"><h3>{relation.a === relation.b ? `${relation.a} ↻ self` : `${relation.a} ↔ ${relation.b}`}</h3><p className="hint">Relative weights, not fixed percentages.</p><div className="row two"><NumberField label={relation.a === relation.b ? `${relation.a} → itself` : `${relation.a} → ${relation.b}`} value={relation.weightAB} min={0.001} step={0.1} defaultValue={1} onChange={n => mutate(d => { const target = d.connections.find(c => pairKey(c.a, c.b) === activeRelationKey); if (target) target.weightAB = n })} />{relation.a !== relation.b && <NumberField label={`${relation.b} → ${relation.a}`} value={relation.weightBA} min={0.001} step={0.1} defaultValue={1} onChange={n => mutate(d => { const target = d.connections.find(c => pairKey(c.a, c.b) === activeRelationKey); if (target) target.weightBA = n })} />}</div><button className="danger-text" onClick={() => { mutate(d => { d.connections = d.connections.filter(c => pairKey(c.a, c.b) !== activeRelationKey) }); setActiveRelationKey('') }}>Remove both directions</button></div>}</section></>}
-        {typeTab === 'modules' && <>{drawer.kind === 'module' && module ? <><button className="quiet back-button" onClick={() => setDrawer({ kind: 'type', id: type.id })}>← All modules</button><div className="section-head"><div><h3>{module.id}</h3><p className="hint">{editor.modelNames[module.id] ?? 'No FBX loaded. Bounds can be edited manually.'}</p></div><button className="danger-text" onClick={() => removeModule(module.id)}>Remove</button></div><div className="fbx-drop" onDragOver={e => e.preventDefault()} onDrop={e => dropFbx(e, { kind: 'replace', moduleId: module.id })}><strong>Drop FBX to replace model</strong><button onClick={() => chooseFbx({ kind: 'replace', moduleId: module.id })}>Choose FBX</button></div><Field label="Type"><select value={module.typeId} onChange={e => { updateModule(module.id, m => { m.typeId = e.target.value }); setSelectedType(e.target.value); setTypeIdDraft(e.target.value); setDrawer({ kind: 'module', id: module.id }) }}>{project.types.map(t => <option key={t.id} value={t.id}>{t.id}</option>)}</select></Field><div className="row two"><div className="metric"><span>Width X</span><strong>{meters(module.bounds.maxX - module.bounds.minX)} m</strong></div><div className="metric"><span>Depth Z</span><strong>{meters(module.bounds.maxZ - module.bounds.minZ)} m</strong></div></div><section className="subsection"><h3>2D bounds & ports</h3><ModuleCanvas module={module} doorWidth={project.settings.doorWidth} onPortChange={(id, next) => updateModule(module.id, m => { const i = m.ports.findIndex(p => p.id === id); if (i >= 0) m.ports[i] = next })} onAddPort={edge => updateModule(module.id, m => { const b = m.bounds; const half = project.settings.doorWidth / 2; if ((edge === 'N' || edge === 'S' ? b.maxX - b.minX : b.maxZ - b.minZ) < project.settings.doorWidth) { setNotice('This edge is shorter than the door width'); return } const id = uniqueId(m.ports.map(p => p.id), 'port'); const centerX = Math.round((b.minX + b.maxX) / 2), centerZ = Math.round((b.minZ + b.maxZ) / 2); m.ports.push({ id, edge, x: edge === 'E' ? b.maxX : edge === 'W' ? b.minX : Math.max(b.minX + half, Math.min(b.maxX - half, centerX)), z: edge === 'N' ? b.maxZ : edge === 'S' ? b.minZ : Math.max(b.minZ + half, Math.min(b.maxZ - half, centerZ)) }) })} onDeletePort={id => updateModule(module.id, m => { m.ports = m.ports.filter(p => p.id !== id) })} /></section><section className="subsection"><h3>Bounds relative to model origin</h3><div className="row two">{(['minX', 'maxX', 'minZ', 'maxZ'] as const).map(key => <NumberField key={`${module.id}-${key}`} label={key} value={module.bounds[key] / 1000} step={0.001} suffix="m" validate={n => { const mm = toMm(n); const other = key.endsWith('X') ? (key === 'minX' ? module.bounds.maxX : module.bounds.minX) : (key === 'minZ' ? module.bounds.maxZ : module.bounds.minZ); return key.startsWith('min') ? mm >= other ? 'Minimum must be below maximum' : undefined : mm <= other ? 'Maximum must exceed minimum' : undefined }} onChange={n => setBounds(key, n)} />)}</div><p className="hint">Bounds retain the origin offset. Ports stay on their edges.</p></section><section className="subsection"><h3>Ports</h3>{module.ports.map(port => <div className="port-row" key={port.id}><strong>{port.id}</strong><span>{edgeNames[port.edge]}</span><span>({meters(port.x)}, {meters(port.z)}) m</span><button className="icon danger" aria-label={`Remove port ${port.id}`} onClick={() => updateModule(module.id, m => { m.ports = m.ports.filter(p => p.id !== port.id) })}>×</button></div>)}{!module.ports.length && <p className="empty">Add a port on the canvas above.</p>}</section></> : <><div className="fbx-drop" onDragOver={e => e.preventDefault()} onDrop={e => dropFbx(e, { kind: 'new', typeId: type.id })}><strong>Drop FBX to create a module</strong><span>Module ID comes from the filename.</span><button onClick={() => chooseFbx({ kind: 'new', typeId: type.id })}>Choose FBX</button></div>{project.modules.filter(m => m.typeId === type.id).map(m => <button className="list-item" key={m.id} onClick={() => { setSelectedModule(m.id); setDrawer({ kind: 'module', id: m.id }) }}>{m.id}<small>{m.ports.length} ports</small></button>)}{!project.modules.some(m => m.typeId === type.id) && <p className="empty">No modules yet.</p>}</>}</>}
-        {typeTab === 'spawns' && <><SpawnEditor title="Items" rule={type.items} onChange={rule => updateType(type.id, t => { t.items = rule })} /><SpawnEditor title="Enemies" rule={type.enemies} onChange={rule => updateType(type.id, t => { t.enemies = rule })} /></>}
-      </div></>}
-    </section></div>}
+    {drawer && <div className="modal-backdrop" onPointerDown={e => { if (e.target === e.currentTarget) setDrawer(null) }}><section className="editor-modal" ref={modalRef} role="dialog" aria-modal="true" aria-label="New type"><div className="modal-top"><span>NEW TYPE</span><button className="icon" aria-label="Close" onClick={() => setDrawer(null)}>×</button></div><div className="modal-body"><Field label="Type ID"><input autoFocus placeholder="e.g. entrance" value={newTypeId} onChange={e => setNewTypeId(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addType() }} /></Field><button className="primary full-width" onClick={addType}>Create type</button></div></section></div>}
+    {editor.windows.map(layout => {
+      if (layout.kind === 'type') {
+        const t = project.types.find(value => value.id === layout.id)
+        if (!t) return null
+        const connections = project.connections.filter(c => c.a === t.id || c.b === t.id)
+        const selectedRelation = connections.find(c => pairKey(c.a, c.b) === activeRelationKey)
+        return <FloatingWindow key={`type-${layout.id}`} layout={layout} title={`TYPE / ${t.id}`} onChange={updateWindow} onFocus={() => focusWindow(layout)} onClose={() => closeWindow('type', t.id)}>
+          <div className="row two"><TypeIdInput type={t} project={project} onCommit={next => commitTypeId(t.id, next)} /><Field label="Color"><input type="color" value={t.color} onChange={e => updateType(t.id, value => { value.color = e.target.value })} /></Field></div>
+          <NumberField label="Share of map modules (%)" value={t.percent} min={0} max={100} step={0.1} suffix="%" onChange={n => updateType(t.id, value => { value.percent = n })} /><p className="hint">{targets[t.id] ?? 0} of {project.settings.totalModules} modules in the map</p>
+          <NumberField label="Required minimum" value={t.requiredMin} min={0} defaultValue={0} onChange={n => updateType(t.id, value => { value.requiredMin = n })} /><p className="hint">Included in the target above.</p>
+          <section className="subsection"><div className="section-head"><h3>Connections</h3><button className="quiet" onClick={() => { setConnectSource(t.id); closeWindow('type', t.id) }}>New connection</button></div>{connections.map(c => <button className={activeRelationKey === pairKey(c.a, c.b) ? 'list-item selected' : 'list-item'} key={pairKey(c.a, c.b)} onClick={() => setActiveRelationKey(pairKey(c.a, c.b))}>{c.a === c.b ? `${t.id} ↻ self` : `${c.a} ↔ ${c.b}`}<small>{c.a === c.b ? `↻ ${c.weightAB}` : `→ ${c.weightAB} · ← ${c.weightBA}`}</small></button>)}{!connections.length && <p className="empty">No connections yet.</p>}{selectedRelation && <div className="relation-editor"><h3>{selectedRelation.a} ↔ {selectedRelation.b}</h3><p className="hint">Relative weights.</p><div className="row two"><NumberField label={`${selectedRelation.a} → ${selectedRelation.b}`} value={selectedRelation.weightAB} min={0.001} step={0.1} defaultValue={1} onChange={n => mutate(d => { const target = d.connections.find(c => pairKey(c.a, c.b) === activeRelationKey); if (target) target.weightAB = n })} />{selectedRelation.a !== selectedRelation.b && <NumberField label={`${selectedRelation.b} → ${selectedRelation.a}`} value={selectedRelation.weightBA} min={0.001} step={0.1} defaultValue={1} onChange={n => mutate(d => { const target = d.connections.find(c => pairKey(c.a, c.b) === activeRelationKey); if (target) target.weightBA = n })} />}</div><button className="danger-text" onClick={() => { mutate(d => { d.connections = d.connections.filter(c => pairKey(c.a, c.b) !== activeRelationKey) }); setActiveRelationKey('') }}>Remove both directions</button></div>}</section>
+        </FloatingWindow>
+      }
+      const m = project.modules.find(value => value.id === layout.id)
+      if (!m) return null
+      const updatePort = (oldId: string, next: Port) => updateModule(m.id, draft => { const index = draft.ports.findIndex(p => p.id === oldId); if (index >= 0) draft.ports[index] = next })
+      return <FloatingWindow key={`module-${layout.id}`} layout={layout} title={`MODULE / ${m.id}`} onChange={updateWindow} onFocus={() => focusWindow(layout)} onClose={() => closeWindow('module', m.id)}>
+        <p className="hint">{editor.modelNames[m.id] ?? 'No FBX loaded. Bounds remain editable.'}</p><div className="section-head"><h3>Model & footprint</h3><button className="danger-text" onClick={() => removeModule(m.id)}>Delete module</button></div>
+        <div className="fbx-drop" onDragOver={e => e.preventDefault()} onDrop={e => dropFbx(e, { kind: 'replace', moduleId: m.id })}><strong>Drop FBX to replace</strong><button onClick={() => chooseFbx({ kind: 'replace', moduleId: m.id })}>Choose FBX</button></div>
+        <Field label="Type"><select value={m.typeId} onChange={e => updateModule(m.id, draft => { draft.typeId = e.target.value })}>{project.types.map(t => <option key={t.id} value={t.id}>{t.id}</option>)}</select></Field>
+        <div className="row two"><div className="metric"><span>Width X</span><strong>{meters(m.bounds.maxX - m.bounds.minX)} m</strong></div><div className="metric"><span>Depth Z</span><strong>{meters(m.bounds.maxZ - m.bounds.minZ)} m</strong></div></div>
+        <section className="subsection"><h3>2D bounds & ports</h3><ModuleCanvas module={m} doorWidth={project.settings.doorWidth} onPortChange={updatePort} onAddPort={point => updateModule(m.id, draft => { draft.ports.push({ id: uniqueId(draft.ports.map(p => p.id), 'port'), ...point, allowedTypeIds: null }) })} onError={setNotice} /></section>
+        <section className="subsection"><h3>Bounds relative to model origin</h3><div className="row two">{(['minX', 'maxX', 'minZ', 'maxZ'] as const).map(key => <NumberField key={`${m.id}-${key}`} label={key} value={m.bounds[key] / 1000} step={0.001} suffix="m" validate={n => { const mm = toMm(n); const other = key.endsWith('X') ? (key === 'minX' ? m.bounds.maxX : m.bounds.minX) : (key === 'minZ' ? m.bounds.maxZ : m.bounds.minZ); return key.startsWith('min') ? mm >= other ? 'Minimum must be below maximum' : undefined : mm <= other ? 'Maximum must exceed minimum' : undefined }} onChange={n => setBounds(m.id, key, n)} />)}</div></section>
+        <section className="subsection"><h3>Ports</h3>{m.ports.map(port => <PortEditor key={port.id} port={port} module={m} project={project} onChange={next => updatePort(port.id, next)} onDelete={() => updateModule(m.id, draft => { draft.ports = draft.ports.filter(p => p.id !== port.id) })} />)}{!m.ports.length && <p className="empty">Add a port on the canvas above.</p>}</section>
+        <SpawnEditor title="Items" rule={m.items} onChange={rule => updateModule(m.id, draft => { draft.items = rule })} /><SpawnEditor title="Enemies" rule={m.enemies} onChange={rule => updateModule(m.id, draft => { draft.enemies = rule })} />
+      </FloatingWindow>
+    })}
 
   </div>
 }

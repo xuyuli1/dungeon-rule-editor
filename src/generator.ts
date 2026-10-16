@@ -1,7 +1,8 @@
-import { compareId, type Bounds, type Edge, type Module, type Point, type RuntimeProject, type Port, typeTargets, validateProject, weightFor } from './model'
+import { compareId, type Bounds, type Edge, type Module, type Point, type RuntimeProject, type Port, type SpawnRule, typeTargets, validateProject, weightFor } from './model'
 
 export type Placement = { instanceId: string; moduleId: string; typeId: string; x: number; z: number; rotation: 0 | 1 | 2 | 3; parent?: { instanceId: string; parentPortId: string; ownPortId: string } }
-export type PreviewResult = { placements: Placement[]; complete: boolean; seed: number; checks: number; restarts: number; targets: Record<string, number>; warnings: string[] }
+export type SpawnMarker = { instanceId: string; kind: 'item' | 'enemy'; id: string; x: number; z: number }
+export type PreviewResult = { placements: Placement[]; markers: SpawnMarker[]; complete: boolean; seed: number; checks: number; restarts: number; targets: Record<string, number>; warnings: string[] }
 type Candidate = { parentIndex: number; parentPort: Port; child: Module; childPort: Port; rotation: 0 | 1 | 2 | 3; x: number; z: number; rank: number }
 type Progress = (result: PreviewResult) => void
 
@@ -38,6 +39,40 @@ export function overlaps(a: Bounds, b: Bounds): boolean {
 }
 const normal = (edge: Edge): Point => edge === 'N' ? { x: 0, z: 1 } : edge === 'E' ? { x: 1, z: 0 } : edge === 'S' ? { x: 0, z: -1 } : { x: -1, z: 0 }
 const usedKey = (index: number, portId: string) => `${index}\u0000${portId}`
+export const portAllows = (port: Port, targetTypeId: string) => port.allowedTypeIds === null || port.allowedTypeIds.includes(targetTypeId)
+export function hashSeed(text: string): number {
+  let hash = 2166136261
+  for (let i = 0; i < text.length; i++) { hash ^= text.charCodeAt(i); hash = Math.imul(hash, 16777619) }
+  return hash >>> 0
+}
+export function drawSpawn(rule: SpawnRule, rng: XorShift32): string[] {
+  const count = rule.min + rng.index(rule.max - rule.min + 1)
+  const total = rule.entries.reduce((sum, e) => sum + e.weight, 0)
+  const result: string[] = []
+  for (let i = 0; i < count; i++) {
+    let value = rng.next() * total
+    for (const entry of rule.entries) { value -= entry.weight; if (value < 0) { result.push(entry.id); break } }
+  }
+  return result
+}
+export function spawnMarkers(project: RuntimeProject, placements: Placement[], seed: number): SpawnMarker[] {
+  const modules = new Map(project.modules.map(m => [m.id, m]))
+  const markers: SpawnMarker[] = []
+  for (const placement of placements) {
+    const module = modules.get(placement.moduleId)!
+    const base = `${seed >>> 0}:${placement.instanceId}:${placement.moduleId}`
+    const positions = new XorShift32(hashSeed(`${base}:positions`))
+    for (const kind of ['item', 'enemy'] as const) {
+      const ids = drawSpawn(module[kind === 'item' ? 'items' : 'enemies'], new XorShift32(hashSeed(`${base}:${kind}`)))
+      for (const id of ids) {
+        const local = { x: module.bounds.minX + .15 * (module.bounds.maxX - module.bounds.minX) + positions.next() * .7 * (module.bounds.maxX - module.bounds.minX), z: module.bounds.minZ + .15 * (module.bounds.maxZ - module.bounds.minZ) + positions.next() * .7 * (module.bounds.maxZ - module.bounds.minZ) }
+        const rotated = rotate(local, placement.rotation)
+        markers.push({ instanceId: placement.instanceId, kind, id, x: Math.round(placement.x + rotated.x), z: Math.round(placement.z + rotated.z) })
+      }
+    }
+  }
+  return markers
+}
 
 export function generate(project: RuntimeProject, seed: number, onProgress?: Progress, maxChecks = 120000, maxRestarts = 24): PreviewResult {
   const errors = validateProject(project)
@@ -68,7 +103,7 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
       ...project.types.filter(t => (counts[t.id] ?? 0) < t.requiredMin).map(t => `${t.id}: required at least ${t.requiredMin}, placed ${counts[t.id] ?? 0}`),
       ...project.types.filter(t => (counts[t.id] ?? 0) !== targets[t.id]).map(t => `${t.id}: target ${targets[t.id]}, placed ${counts[t.id] ?? 0}`),
     ]
-    return { placements: placements.map(p => ({ ...p, parent: p.parent ? { ...p.parent } : undefined })), complete, seed: seed >>> 0, checks, restarts, targets, warnings }
+    return { placements: placements.map(p => ({ ...p, parent: p.parent ? { ...p.parent } : undefined })), markers: spawnMarkers(project, placements, seed), complete, seed: seed >>> 0, checks, restarts, targets, warnings }
   }
   const updateBest = (placements: Placement[]) => {
     const s = score(placements)
@@ -115,8 +150,9 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
           const parentNormal = rotate(normal(parentPort.edge), parent.rotation)
           for (const { module: child, count } of bagModules) {
             const weight = weightFor(project.connections, parent.typeId, child.typeId)
-            if (weight <= 0) continue
+            if (weight <= 0 || !portAllows(parentPort, child.typeId)) continue
             for (const childPort of child.ports) for (const rotation of [0, 1, 2, 3] as const) {
+              if (!portAllows(childPort, parent.typeId)) continue
               const childNormal = rotate(normal(childPort.edge), rotation)
               if (childNormal.x !== -parentNormal.x || childNormal.z !== -parentNormal.z) continue
               checks++
