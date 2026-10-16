@@ -26,12 +26,12 @@ export function RelationEdge({ id, source, target, selected, style, data }: Edge
   const common = { fill: 'none', stroke: color, strokeWidth: selected ? 2.4 : 1.8, opacity, className: 'relation-stroke' }
 
   if (source === target) {
-    const left = a.x + a.width * .28, right = a.x + a.width * .72, top = a.y - 30
+    const left = a.x + a.width * .28, right = a.x + a.width * .72, top = a.y - 18
     const path = `M ${right} ${a.y} L ${right} ${top} L ${left} ${top} L ${left} ${a.y}`
     return <g className="react-flow__edge-path-group" data-edge-id={id}>
       <defs><marker id={markerId} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill={color} /></marker></defs>
       <path d={path} {...common} markerEnd={`url(#${markerId})`} /><path d={path} fill="none" stroke="transparent" strokeWidth="20" className="relation-hit" />
-      {label(weights?.weightAB, a.x + a.width / 2, top - 2)}
+      {label(weights?.weightAB, a.x + a.width / 2, top + 2)}
     </g>
   }
 
