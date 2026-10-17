@@ -1,38 +1,39 @@
-# 项目交接摘要
+# Dungeon Rule Editor: Development Handoff
 
-给在另一台电脑上接手本仓库的开发者或 Codex 对话阅读。本文记录**产品目的和已经确认的设计决定**；具体使用方法见 [README.md](README.md)，生成细则见 [ALGORITHM.md](ALGORITHM.md)，运行时数据字段见 [schema/runtime-v4.schema.json](schema/runtime-v4.schema.json)。新需求应以用户最新说明为准，不要把本文当成不可修改的需求。
+Read this document when continuing development in a new Codex conversation or on another computer. It explains the product intent and decisions made with the user. [README.md](README.md) explains how to run and use the editor, [ALGORITHM.md](ALGORITHM.md) defines generation behavior, and [schema/runtime-v4.schema.json](schema/runtime-v4.schema.json) defines the shape of exported runtime JSON. **The user's latest instructions take precedence over this handoff.** Discuss unclear rule semantics and interaction details with the user before changing them.
 
-## 项目目的与范围
+## Purpose and scope
 
-- 这是一个供个人使用的、尽量简洁的**浏览器端随机副本地图规则编辑器**，而不是 Unity 地图生成器。网页负责定义模块、类型关系和生成规则，检查并预览布局，导出供 Unity 使用的 JSON。
-- 编辑器只配置**地图**。物品和敌人的编辑、预览和导出数据已从 v4 移除；不要依据早期对话或旧方案重新加入。
-- 网页界面使用英文；本地导入或用户填写的 ID 原样保留。当前视觉是深蓝黑色游戏菜单风格，类型颜色用于区分节点和模块。
-- React、TypeScript、Vite；类型关系图用 React Flow，模块编辑与地图预览用 Three.js 绘制三维占用盒。FBX 只在浏览器本地解析尺寸，界面不渲染 FBX 模型，也不上传文件。
+Build a small, visual, browser-based editor for a personal game's random dungeon **map rules**. The editor defines module types, concrete modules, connectors, directed generation relationships, quotas, and a reproducible 3D layout preview. It exports JSON for a future Unity generator. The editor does not instantiate a Unity scene, run the Unity generator, or perform final in-game collision checks.
 
-## 已确认的规则
+The product deliberately focuses on maps. Item and enemy configuration, preview markers, and export fields were removed in v4. Do not restore them based on older discussions. UI copy is English; user-provided IDs are preserved. The current visual language is a dark blue-black game menu with type colors distinguishing graph nodes and preview boxes.
 
-- X/Z 是水平面，Y 向上；1 编辑器单位为 1 米，运行时 JSON 坐标为**整数毫米**。FBX 导入时读取 `UnitScaleFactor`，保存相对模型原点的 X/Y/Z 六个占用边界；允许在 Advanced 中微调。Unity 侧模块 Prefab 和场景 Transform Scale 约定为 1。
-- 楼梯、房间、走廊都只是普通模块，没有固定楼层高度。模块只绕 Y 轴旋转 90° 的倍数。接口位于三维盒子的垂直侧面，保存 ID、本地 X/Y/Z、侧面方向及允许连接的目标类型。全项目共用接口宽度与高度，新项目各默认 1 米；完整矩形必须位于侧面之内。
-- 类型关系是**有方向的生成规则**：`A → B` 允许从已放置 A 的空闲接口生成 B，不限制玩家通过接口的方向。反向连接须单独创建；每个方向有独立相对权重。两端接口都必须允许对方类型。
-- 起点是一种特殊类型，每张地图只生成其中一个具体模块，放在世界原点。`Modules after start` 不含起点。其余类型百分比合计 100%，采用最大余数法换算目标数量；`Required minimum` 包含在目标内。具体模块可重复出现。
-- 从任意已放置模块的空闲接口扩展，允许分支；每个新模块只接一个父模块，不主动生成环。接口三维中心及相反朝向要对齐，三维占用盒有正体积交叠即拒绝，盒子仅接触允许。固定随机种子应复现结果；失败时显示最佳部分地图和告警。
-- 三维预览的已连接接口是**实线空心矩形**，未连接接口是**实线斜杠矩形**；未连接是正常状态，不产生告警。Unity 负责实际门体及未连接接口的封口。模块画布和地图预览均支持绕目标旋转、平移、滚轮缩放及选中后按 F 聚焦。
+The implementation uses React, TypeScript, Vite, React Flow for the two-dimensional type relationship graph, and Three.js for the module and map canvases. FBX is parsed locally in the browser for bounds; the editor never renders the FBX mesh or uploads it to a server.
 
-## 当前数据、代码和验证入口
+## Confirmed map model
 
-- 当前运行时 JSON 和项目 ZIP 均为 **v4**；不迁移 v3 文件或旧浏览器草稿。`src/model.ts` 是数据结构、默认值、校验与导出的主要入口；`src/generator.ts` 实现布局搜索；`src/geometry.ts` 处理接口约束；`src/io.ts` 处理 FBX 与 ZIP/JSON；`src/autosave.ts` 保存浏览器草稿；`src/App.tsx` 和 `src/ThreeCanvas.tsx` 是界面入口。测试位于 `tests/core.test.ts`。
-- 编辑项目自动保存在**当前浏览器的 IndexedDB**。项目 ZIP 包含规则、编辑器布局和原始 FBX；运行时 JSON 只含游戏规则、模块占用和接口，不含 FBX 或窗口布局。源码仓库不包含用户的地图草稿、项目 ZIP、Unity 工程或 FBX 资源。
-- 用 Node.js 24 执行 `npm ci`、`npm test`、`npm run build`。GitHub Actions 在推送 `main` 后测试、构建并部署 [GitHub Pages 编辑器](https://xuyuli1.github.io/dungeon-rule-editor/)。上次完成的 v4 提交为 `88fc1ae`，当时 13 项测试、生产构建和 Pages 部署均通过；接手时仍须以当前仓库和实际测试结果为准。
-- 曾用 Unity 项目中的 `StairsRoom.fbx` 核对解析，所得相对原点 Y 边界为 0–15 米。这是尺寸换算检查，不等于已在 Unity 中实现或验证运行时地图生成。
+- **Coordinates and assets:** X/Z are horizontal, Y points up. The UI displays metres; runtime JSON stores integer millimetres. FBX `UnitScaleFactor` converts source coordinates to metres. Each module stores an X/Y/Z axis-aligned occupancy box relative to the FBX model origin. All six bounds can be adjusted in the collapsed Advanced section. Unity is expected to use a corresponding Prefab with root and scene Transform scale 1.
+- **Types and modules:** A type has an ID, display color, non-start map share, and required minimum. Type color is editor-only and is omitted from runtime JSON. A concrete module has a unique ID, type ID, bounds, and connectors. For FBX imports, the module ID comes from the filename; there is no separate required display name. Modules imported from runtime JSON remain editable even without their original FBX. The same concrete module may be selected more than once in a map. Stairs, corridors, rooms, and connectors are ordinary modules; there is no fixed floor height or floor index.
+- **Connectors:** A connector has a unique ID within its module, local X/Y/Z center, a vertical side (`N/E/S/W`), and optional allowed target type IDs. All connectors share project-wide width and height, each defaulting to 1 metre in a new project. The entire rectangular connector must fit on a vertical side of the occupancy box. A thin model can be imported but cannot accept a connector until the bounds provide sufficient height. `allowedTypeIds: null` adds no restriction beyond the type relationship; a restricted connector must accept the other module's type at **both** ends of a join.
+- **Directed relationships:** `A → B` permits the generator to extend from an already placed A to a new B. It does not restrict the player's travel direction through a door. The reverse relationship must be created separately. Each arrow has its own positive **relative weight**, which influences the order of legal candidates rather than setting a fixed probability or quota. A relationship to the start type is invalid.
+- **Start and quotas:** The start is a special type containing one or more concrete modules. Exactly one is sampled uniformly and placed at world `(0,0,0)`. `Modules after start` excludes it. Non-start type shares must total 100%; the largest-remainder method converts shares to integer targets. `Required minimum` is included in each type's target, not added to it.
+- **Assembly:** Extend from any unused connector of any placed module, so branches are possible. A new module attaches to one parent; the first version does not deliberately create cycles. Modules rotate only by multiples of 90° about Y. Both connector centers must coincide in X/Y/Z, and their rotated side normals must oppose each other. Reject positive-volume overlap between 3D occupancy boxes; touching faces, edges, or points is allowed. A fixed seed reproduces the search result. If no complete map is found, show the best partial layout and its quota warnings.
+- **Preview:** Draw colored 3D occupancy boxes, not FBX meshes. One solid, empty rectangle represents each connected connector pair. An unused connector has a solid, hatched rectangle and is normal, without a warning. Unity is responsible for constructing real doors and sealing unused openings. The module canvas and map preview support orbit, pan, wheel zoom, Fit, and F to focus. Camera changes do not affect exported rules.
 
-## 在 Windows 开始新对话
+## Current workflow and source map
 
-1. 克隆 `https://github.com/xuyuli1/dungeon-rule-editor.git`，在 Windows 的 Codex 中选择克隆后的仓库目录。
-2. 请新对话先阅读本文件、README、ALGORITHM、v4 Schema，并检查 `git status`、测试及构建，然后再处理新的需求。可直接说：“请先阅读 `HANDOFF.md` 和其中链接的规范文件，复述当前产品目标及数据边界；在我说明下一项修改前不要改代码。”
-3. 如果还要在 Windows **编辑同一份地图草稿**，需从旧浏览器用 Save ZIP 导出并传到 Windows，再用 Open ZIP 导入。仅迁移 Git 仓库或对话内容不会带来该草稿。若要用真实 FBX 回归测试，也须另外提供相应 FBX；仓库只有不依赖私有资源的样例和自动化测试。
+The single main workspace displays the type graph, 3D map preview, and generation controls. Type graph nodes contain concrete module slots. Graph context menus create types and directed relationships; floating windows edit type settings and modules while the background remains interactive. The module window imports or replaces FBX, edits advanced bounds, places and drags connectors on the 3D box, and accepts precise local coordinates and target-type restrictions. File actions live in the top-left menu.
 
-## 协作注意
+Runtime JSON and editable project ZIP are both **v4**. There is no migration from v3 files or old browser drafts: older imports report an unsupported version. `src/model.ts` defines data, defaults, validation, and runtime export; `src/generator.ts` implements layout search; `src/geometry.ts` handles connector placement; `src/io.ts` handles FBX and ZIP/JSON; `src/autosave.ts` manages the local draft; `src/App.tsx` and `src/ThreeCanvas.tsx` implement the main UI. Regression tests are in `tests/core.test.ts`.
 
-- 优先保持编辑器与 Unity 对坐标、单位、旋转、接口许可和权重含义的一致；修改规则时同步更新 v4 或后续版本的 Schema、ALGORITHM、测试和导入导出说明。
-- 不要因交接摘要中的历史选择而跳过新的需求讨论。用户曾要求不清楚的生成语义和交互细节先逐项讨论清楚，再实现。
-- 不要把浏览器本地项目 ZIP、FBX、个人 Unity 工程或带用户数据的 JSON 提交到公开仓库。
+The editable project autosaves in the **current browser's IndexedDB**. Save ZIP includes rules, editor layout, and original FBX files. Export JSON includes runtime map rules, occupancy boxes, and connectors, but no FBX or editor layout. The repository contains neither user map drafts nor the Unity project or private FBX assets. The repository's `schema/runtime-v4.schema.json` is a specification for runtime JSON, **not** a particular exported map.
+
+Use Node.js 24 and run `npm ci`, `npm test`, and `npm run build`. The GitHub Actions workflow tests, builds, and deploys `main` to [GitHub Pages](https://xuyuli1.github.io/dungeon-rule-editor/). The last functional v4 commit was `88fc1ae`; its 13 tests, production build, and Pages deployment passed at the time. Recheck the current branch rather than assuming that historical result still applies. A real `StairsRoom.fbx` from the user's Unity project parsed to model-relative Y bounds of 0–15 metres. This checked FBX conversion, **not** Unity runtime generation.
+
+## Continuing on Windows
+
+1. Clone `https://github.com/xuyuli1/dungeon-rule-editor.git` and open that checkout as the Codex workspace. In a new chat, say: “Read `HANDOFF.md`, `README.md`, `ALGORITHM.md`, and `schema/runtime-v4.schema.json`. Summarize the product goal and data boundaries. Check repository status, tests, and build before editing. Wait for my next feature request.”
+2. Cloning the repository does **not** transfer a map saved in the Mac browser. To continue editing the same map, use **Save ZIP** on the original browser, transfer that ZIP to Windows, and use **Open ZIP** there. Runtime JSON alone cannot restore the original FBX files or editing layout.
+3. Transfer a real FBX separately if a new change needs testing against the user's assets. Public source control contains sample rules and automated tests without private models.
+
+Keep editor and Unity interpretations of units, origin offsets, rotations, connector permissions, and weight semantics aligned. When changing runtime rules, update the schema, algorithm document, import/export behavior, and meaningful tests together. Do not commit a user's ZIP, FBX, Unity project, or private exported rules to the public repository.
