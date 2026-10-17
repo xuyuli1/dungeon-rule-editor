@@ -178,8 +178,7 @@ input.default-value:not(:focus) { color: #899ba0; }
 .advanced-bounds { border: 1px solid #354750; padding: 12px; }
 .advanced-bounds summary { cursor: pointer; font-weight: 700; }
 .advanced-bounds .row { margin-top: 12px; }
-.port-editor .row.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-@media (max-width: 600px) { .port-editor .row.four { grid-template-columns: 1fr; } .three-canvas { height: 330px; } }
+@media (max-width: 600px) { .three-canvas { height: 330px; } }
 .preview-interactive .preview-svg { width: 100%; height: 100%; touch-action: none; cursor: grab; }
 .preview-interactive .preview-svg:active { cursor: grabbing; }
 .preview-tools { position: absolute; z-index: 2; right: 8px; top: 8px; display: flex; gap: 4px; }
@@ -190,3 +189,13 @@ input.default-value:not(:focus) { color: #899ba0; }
 .marker-detail button { padding: 0 5px; border: 0; background: transparent; }
 .spawn-marker { cursor: pointer; }
 @media (max-width: 600px) { .floating-body { padding: 12px; } .port-editor .row.three { grid-template-columns: 1fr; } .graph { height: 540px; } }
+.xyz-input { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.xyz-input label { display: flex; align-items: center; min-width: 0; border: 1px solid #667a80; background: #102129; }
+.xyz-input label + label { border-left: 0; }
+.xyz-input label:focus-within { outline: 1px solid #91e6dc; outline-offset: -1px; }
+.xyz-input span { padding: 0 4px 0 9px; color: #8da4aa; font: 10px var(--mono); }
+.xyz-input input { flex: 1; min-width: 0; border: 0; background: transparent; padding-left: 2px; outline: none; }
+.port-popover { position: absolute; z-index: 4; top: 8px; left: 8px; width: min(300px, calc(100% - 16px)); max-height: calc(100% - 16px); overflow-y: auto; padding: 12px; border: 1px solid #425961; background: #182c35; box-shadow: 0 8px 24px #0009; }
+.port-popover-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.port-popover-head strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.port-editor .field-error, .port-popover .field-error { display: block; margin: -6px 0 12px; }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { nearestValidPort, portAtBoundary } from './geometry'
@@ -14,7 +14,9 @@ type Props = {
   doorHeight: number
   onPortChange?: (id: string, next: Port) => void
   onAddPort?: (point: PortPoint) => void
+  onDeletePort?: (id: string) => void
   onError?: (message: string) => void
+  portPanel?: (portId: string, select: (id: string) => void) => ReactNode
 }
 type View = { scene: THREE.Scene; camera: THREE.PerspectiveCamera; controls: OrbitControls; renderer: THREE.WebGLRenderer; content: THREE.Group; box?: THREE.Mesh; picks: THREE.Object3D[]; bounds: THREE.Box3; frame: number; resize: ResizeObserver; fit: (box?: THREE.Box3) => void }
 
@@ -29,17 +31,23 @@ function disposeTree(object: THREE.Object3D) {
     }
   })
 }
-function makeLabel(text: string): THREE.Sprite {
-  const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 96
-  const context = canvas.getContext('2d')!
-  context.fillStyle = '#071922dc'; context.fillRect(0, 0, 512, 96)
-  context.fillStyle = '#ffffff'; context.font = 'bold 42px sans-serif'; context.textAlign = 'center'; context.textBaseline = 'middle'
-  context.fillText(text, 256, 49, 490)
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false }))
-  sprite.scale.set(3.1, .58, 1); sprite.renderOrder = 8
+const portColor = 0xffffff, portHighlight = 0xffc65c
+// fitHeight sizes the label to its text at a fixed on-screen height; otherwise it is a 3.1 m wide world-space label
+function makeLabel(text: string, fitHeight?: number): THREE.Sprite {
+  const canvas = document.createElement('canvas'); canvas.height = 96
+  const font = 'bold 42px sans-serif'
+  const measure = canvas.getContext('2d')!; measure.font = font
+  canvas.width = fitHeight ? Math.min(512, Math.ceil(measure.measureText(text).width) + 40) : 512
+  const context = canvas.getContext('2d')!, width = canvas.width
+  context.fillStyle = '#071922dc'; context.fillRect(0, 0, width, 96)
+  context.fillStyle = '#ffffff'; context.font = font; context.textAlign = 'center'; context.textBaseline = 'middle'
+  context.fillText(text, width / 2, 49, width - 22)
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false, sizeAttenuation: !fitHeight }))
+  if (fitHeight) sprite.scale.set(fitHeight * width / 96, fitHeight, 1); else sprite.scale.set(3.1, .58, 1)
+  sprite.renderOrder = 8; sprite.raycast = () => {}
   return sprite
 }
-function addBox(group: THREE.Group, b: Bounds, color: string, id: string, pickable = false): THREE.Mesh {
+function addBox(group: THREE.Group, b: Bounds, color: string, id: string, pickable = false, label = true): THREE.Mesh {
   const size = new THREE.Vector3(m(b.maxX - b.minX), m(b.maxY - b.minY), m(b.maxZ - b.minZ))
   const geometry = new THREE.BoxGeometry(size.x, size.y, size.z)
   const center = new THREE.Vector3(m((b.minX + b.maxX) / 2), m((b.minY + b.maxY) / 2), m((b.minZ + b.maxZ) / 2))
@@ -47,7 +55,7 @@ function addBox(group: THREE.Group, b: Bounds, color: string, id: string, pickab
   mesh.position.copy(center); mesh.userData = { id, box: pickable }; group.add(mesh)
   const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geometry), new THREE.LineBasicMaterial({ color, transparent: true, opacity: .95 }))
   edges.position.copy(center); group.add(edges)
-  const label = makeLabel(id); label.position.set(center.x, m(b.maxY) + .5, center.z); group.add(label)
+  if (label) { const sprite = makeLabel(id); sprite.position.set(center.x, m(b.maxY) + .5, center.z); group.add(sprite) }
   return mesh
 }
 function frame(port: PortPoint, width: number, height: number, connected: boolean, id?: string): THREE.Group {
@@ -62,7 +70,8 @@ function frame(port: PortPoint, width: number, height: number, connected: boolea
     -w / 2, h / 2, 0, -w / 2, -h / 2, 0,
   ]
   const outline = new THREE.BufferGeometry(); outline.setAttribute('position', new THREE.Float32BufferAttribute(points, 3))
-  group.add(new THREE.LineSegments(outline, new THREE.LineBasicMaterial({ color: connected ? 0xffffff : 0xffd89a, depthTest: false })))
+  const outlineMaterial = new THREE.LineBasicMaterial({ color: connected ? portColor : 0xffd89a, depthTest: false })
+  group.add(new THREE.LineSegments(outline, outlineMaterial))
   if (!connected) {
     const hatch: number[] = []
     const step = Math.max(.12, Math.min(w, h) / 5)
@@ -74,8 +83,11 @@ function frame(port: PortPoint, width: number, height: number, connected: boolea
     group.add(new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: 0xffd89a, transparent: true, opacity: .65, depthTest: false })))
   }
   if (id) {
-    const pick = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }))
+    const fill = new THREE.MeshBasicMaterial({ color: portHighlight, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false, depthTest: false })
+    const pick = new THREE.Mesh(new THREE.PlaneGeometry(w, h), fill)
     pick.userData.portId = id; group.add(pick)
+    const label = makeLabel(id, .05); label.position.set(0, h / 2 + .25, .05); group.add(label)
+    group.userData = { portId: id, outline: outlineMaterial, fill }
   }
   return group
 }
@@ -92,6 +104,17 @@ export function ThreeCanvas(props: Props) {
   const ghost = useRef<THREE.Group | null>(null)
   const selectedBox = useRef<THREE.Box3 | null>(null)
   const lastFitSource = useRef<unknown>(null)
+  const [selectedPort, setSelectedPort] = useState('')
+  const selectedPortRef = useRef(''); selectedPortRef.current = selectedPort
+  const hoveredPort = useRef('')
+  const popover = useRef<HTMLDivElement>(null)
+  const paintPorts = () => view.current?.content.children.forEach(child => {
+    const { portId, outline, fill } = child.userData as { portId?: string; outline?: THREE.LineBasicMaterial; fill?: THREE.MeshBasicMaterial }
+    if (!portId || !outline || !fill) return
+    const active = portId === hoveredPort.current || portId === selectedPortRef.current
+    outline.color.set(active ? portHighlight : portColor); fill.opacity = portId === selectedPortRef.current ? .45 : active ? .28 : 0
+  })
+  useEffect(paintPorts, [selectedPort])
 
   useEffect(() => {
     const host = root.current!
@@ -153,12 +176,18 @@ export function ThreeCanvas(props: Props) {
         const point = pointOnBox(event, !!drag.current)
         if (drag.current) drag.current.point = point
         showGhost(point)
+      } else if (current.current.module && event.buttons === 0) {
+        const id = String(cast(event, state.picks).find(hit => hit.object.userData.portId)?.object.userData.portId ?? '')
+        if (id !== hoveredPort.current) { hoveredPort.current = id; renderer.domElement.style.cursor = id ? 'pointer' : ''; paintPorts() }
       }
     }
+    const onLeave = () => { if (hoveredPort.current) { hoveredPort.current = ''; renderer.domElement.style.cursor = ''; paintPorts() } }
     const onUp = (event: PointerEvent) => {
       controls.enabled = true
+      const clicked = !!down && Math.hypot(event.clientX - down.x, event.clientY - down.y) < 5
       if (drag.current) {
-        const { id, point } = drag.current; drag.current = null; showGhost(null)
+        const { id, point } = drag.current; drag.current = null; showGhost(null); down = null
+        if (clicked) { setSelectedPort(id); return }
         const original = current.current.module?.ports.find(port => port.id === id)
         if (point && original) current.current.onPortChange?.(id, { ...original, ...point })
         return
@@ -169,7 +198,8 @@ export function ThreeCanvas(props: Props) {
         else current.current.onError?.('The full connector rectangle must fit on a vertical side face.')
         return
       }
-      if (down && Math.hypot(event.clientX - down.x, event.clientY - down.y) < 5 && current.current.result) {
+      if (clicked && current.current.module) setSelectedPort('')
+      if (clicked && current.current.result) {
         const hit = cast(event, state.picks)[0]
         if (hit?.object.userData.id) {
           const id = String(hit.object.userData.id); setSelected(id)
@@ -181,6 +211,7 @@ export function ThreeCanvas(props: Props) {
     }
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && placingRef.current) { setPlacing(false); showGhost(null) }
+      else if (event.key === 'Escape' && selectedPortRef.current && (host.contains(document.activeElement) || popover.current?.contains(document.activeElement) || document.activeElement === document.body)) setSelectedPort('')
       if (event.key.toLowerCase() === 'f' && host.contains(document.activeElement)) { event.preventDefault(); state.fit(selectedBox.current ?? undefined) }
     }
     const onWheel = (event: WheelEvent) => event.preventDefault()
@@ -188,14 +219,15 @@ export function ThreeCanvas(props: Props) {
     renderer.domElement.addEventListener('pointermove', onMove)
     renderer.domElement.addEventListener('pointerup', onUp)
     renderer.domElement.addEventListener('pointercancel', onUp)
+    renderer.domElement.addEventListener('pointerleave', onLeave)
     host.addEventListener('wheel', onWheel, { passive: false })
     document.addEventListener('keydown', onKey)
     return () => {
       cancelAnimationFrame(state.frame); state.resize.disconnect(); controls.dispose()
-      renderer.domElement.removeEventListener('pointerdown', onDown, true); renderer.domElement.removeEventListener('pointermove', onMove); renderer.domElement.removeEventListener('pointerup', onUp); renderer.domElement.removeEventListener('pointercancel', onUp)
+      renderer.domElement.removeEventListener('pointerdown', onDown, true); renderer.domElement.removeEventListener('pointermove', onMove); renderer.domElement.removeEventListener('pointerup', onUp); renderer.domElement.removeEventListener('pointercancel', onUp); renderer.domElement.removeEventListener('pointerleave', onLeave)
       host.removeEventListener('wheel', onWheel); document.removeEventListener('keydown', onKey)
       if (ghost.current) { state.scene.remove(ghost.current); disposeTree(ghost.current) }
-      disposeTree(content); scene.remove(content); renderer.dispose(); renderer.domElement.remove(); view.current = null
+      disposeTree(content); scene.remove(content); renderer.dispose(); renderer.domElement.remove(); view.current = null; lastFitSource.current = null
     }
   }, [])
 
@@ -205,9 +237,11 @@ export function ThreeCanvas(props: Props) {
     disposeTree(state.content); state.content.clear(); state.picks = []; state.box = undefined; state.bounds.makeEmpty()
     const { module, project, result, doorWidth, doorHeight } = props
     if (module) {
-      state.box = addBox(state.content, module.bounds, '#8ed6e5', module.id, true)
+      state.box = addBox(state.content, module.bounds, '#8ed6e5', module.id, true, false)
       state.picks.push(state.box); state.bounds.copy(box3(module.bounds))
       for (const port of module.ports) { const shape = frame(port, doorWidth, doorHeight, true, port.id); state.content.add(shape); state.picks.push(shape) }
+      if (selectedPortRef.current && !module.ports.some(port => port.id === selectedPortRef.current)) setSelectedPort('')
+      paintPorts()
     } else if (project && result) {
       const types = new Map(project.types.map(type => [type.id, type]))
       const modules = new Map(project.modules.map(item => [item.id, item]))
@@ -236,5 +270,9 @@ export function ThreeCanvas(props: Props) {
     <div className="three-canvas" ref={root} tabIndex={0} aria-label={props.module ? '3D module and connector editor' : '3D map preview'} />
     <div className="three-canvas-help">Drag to orbit · Middle/right drag to pan · Wheel to zoom · F to focus{props.module ? ' · Drag a connector on the side face' : ''}</div>
     {selected && props.result && <div className="three-selection">{selected}</div>}
+    {selectedPort && props.module && props.portPanel && <div className="port-popover" ref={popover} role="dialog" aria-label={`Port ${selectedPort}`}>
+      <div className="port-popover-head"><strong>{selectedPort}</strong>{props.onDeletePort && <button className="danger-text" onClick={() => { props.onDeletePort?.(selectedPort); setSelectedPort('') }}>Delete</button>}<button className="icon" aria-label="Close port properties" onClick={() => setSelectedPort('')}>×</button></div>
+      {props.portPanel(selectedPort, setSelectedPort)}
+    </div>}
   </div>
 }
