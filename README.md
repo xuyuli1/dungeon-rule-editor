@@ -1,5 +1,7 @@
 # Dungeon Rule Editor
 
+Continuing development in a new Codex chat or on another computer? Read [HANDOFF.md](HANDOFF.md) for the project decisions, code entry points, and Windows setup notes.
+
 A local-first browser editor for modular 3D map rules. Import FBX files to calculate X/Y/Z occupancy boxes, define rectangular side connectors, edit directed type relationships, and preview generated maps. The editor processes files in the browser; it does not upload models or generate a Unity scene.
 
 ## Run locally
