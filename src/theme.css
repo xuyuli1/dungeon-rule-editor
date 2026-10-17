@@ -161,3 +161,11 @@ input, select { font-size: var(--fs-sm); }
 .door-type-used { padding-bottom: 9px; color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
 .door-type-row button.icon { margin-bottom: 4px; }
 @media (max-width: 640px) { .door-type-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .door-type-row .field:first-child { grid-column: 1 / -1; } }
+
+/* Open-top modules: the Models row checkbox and the module's "Space above" field. */
+.library-sky { display: flex; align-items: center; gap: 6px; font-size: var(--fs-xs); white-space: nowrap; }
+.library-sky input { width: auto; }
+.library-row { grid-template-columns: minmax(0, 1.6fr) minmax(110px, .8fr) auto auto auto; }
+.reserved-above-inputs { display: grid; gap: 6px; }
+.reserved-above-inputs .field { margin: 0; }
+.metric-note { display: block; margin-top: 4px; color: var(--muted); font-size: var(--fs-xs); }

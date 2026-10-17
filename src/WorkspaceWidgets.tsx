@@ -8,7 +8,7 @@ export function ModuleSlot({ module, selected }: { module: Module; selected: boo
     <svg viewBox={`${b.minX - pad} ${-b.maxZ - pad} ${w + 2 * pad} ${h + 2 * pad}`} preserveAspectRatio="xMidYMid meet" aria-hidden="true">
       <rect x={b.minX} y={-b.maxZ} width={w} height={h} fill="none" stroke="currentColor" strokeWidth={Math.max(w, h) / 70} />
       {module.ports.map(p => <circle key={p.id} cx={p.x} cy={-p.z} r={Math.max(w, h) / 35} fill="currentColor" />)}
-    </svg><strong>{module.id}</strong><small>{meters(w)} × {meters(b.maxY - b.minY)} × {meters(h)} m · {module.ports.length} ports</small>
+    </svg><strong>{module.id}</strong><small>{meters(w)} × {meters(b.maxY - b.minY)} × {meters(h)} m · {module.ports.length} ports{module.reservedAbove === null ? " · open to sky" : ""}</small>
   </div>
 }
 // The docked panel on the right that shows one type, module or new-type view at a time. `title` is a user ID and is shown as typed.

@@ -1,4 +1,4 @@
-import { compareId, doorTypeFor, type Bounds, type Edge, type Module, type Point, type RuntimeProject, type Port, typeTargets, validateProject, weightFor } from './model'
+import { compareId, doorTypeFor, occupiedBounds, type Bounds, type Edge, type Module, type Point, type RuntimeProject, type Port, typeTargets, validateProject, weightFor } from './model'
 
 export type Placement = { instanceId: string; moduleId: string; typeId: string; x: number; y: number; z: number; rotation: 0 | 1 | 2 | 3; parent?: { instanceId: string; parentPortId: string; ownPortId: string } }
 export type PreviewDoor = { instanceId: string; portId: string; connected: boolean; edge: Edge; x: number; y: number; z: number; width: number; height: number }
@@ -155,8 +155,8 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
               if (checks > maxChecks) break
               const offset = rotate(childPort, rotation)
               const x = worldPoint.x - offset.x, y = worldPoint.y - childPort.y, z = worldPoint.z - offset.z
-              const bounds = rotatedBounds(child.bounds, rotation, x, y, z)
-              if (placements.some(p => overlaps(bounds, rotatedBounds(moduleById.get(p.moduleId)!.bounds, p.rotation, p.x, p.y, p.z)))) continue
+              const bounds = rotatedBounds(occupiedBounds(child), rotation, x, y, z)
+              if (placements.some(p => overlaps(bounds, rotatedBounds(occupiedBounds(moduleById.get(p.moduleId)!), p.rotation, p.x, p.y, p.z)))) continue
               candidates.push({ parentIndex: pi, parentPort, child, childPort, rotation, x, y, z, rank: weightedRank(weight * count) })
             }
           }

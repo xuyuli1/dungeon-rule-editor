@@ -4,8 +4,9 @@ type PortPosition = Pick<Port, 'edge' | 'x' | 'y' | 'z'>
 
 // A port's centre must lie on one of the box's four vertical side faces (within `tolerance` of the plane, then snapped onto
 // it, and within the face's extent). The door rectangle itself may overhang the face's edges, top or bottom.
-export function portAtBoundary(bounds: Bounds, x: number, y: number, z: number, tolerance = 0): PortPosition | null {
-  if (y < bounds.minY || y > bounds.maxY) return null
+// `top` is where the side faces end: the box top, or higher when the module reserves space above (Infinity = open to sky).
+export function portAtBoundary(bounds: Bounds, x: number, y: number, z: number, tolerance = 0, top = bounds.maxY): PortPosition | null {
+  if (y < bounds.minY || y > top) return null
   const sides: { edge: Edge; distance: number; along: number; min: number; max: number }[] = [
     { edge: 'N', distance: Math.abs(z - bounds.maxZ), along: x, min: bounds.minX, max: bounds.maxX },
     { edge: 'E', distance: Math.abs(x - bounds.maxX), along: z, min: bounds.minZ, max: bounds.maxZ },
@@ -20,9 +21,9 @@ export function portAtBoundary(bounds: Bounds, x: number, y: number, z: number, 
 }
 
 // The closest point on a side face for a dragged port centre (the door may overhang the face).
-export function nearestValidPort(bounds: Bounds, x: number, y: number, z: number): PortPosition | null {
+export function nearestValidPort(bounds: Bounds, x: number, y: number, z: number, top = bounds.maxY): PortPosition | null {
   const clamp = (v: number, lo: number, hi: number) => Math.round(Math.max(lo, Math.min(hi, v)))
-  const vertical = clamp(y, bounds.minY, bounds.maxY)
+  const vertical = clamp(y, bounds.minY, top)
   const candidates: PortPosition[] = [
     { edge: 'N', x: clamp(x, bounds.minX, bounds.maxX), y: vertical, z: bounds.maxZ },
     { edge: 'S', x: clamp(x, bounds.minX, bounds.maxX), y: vertical, z: bounds.minZ },
@@ -40,7 +41,7 @@ export type DoorImport = { ports: Port[]; newDoorTypes: DoorType[]; errors: stri
 export const DOOR_FACE_TOLERANCE = 50
 
 // Turns door markers into ports. Names are kept exactly as the port IDs; any problem is an error and no ports are returned.
-export function portsFromDoorMarkers(bounds: Bounds, markers: DoorMarker[], doorTypes: DoorType[]): DoorImport {
+export function portsFromDoorMarkers(bounds: Bounds, markers: DoorMarker[], doorTypes: DoorType[], top = bounds.maxY): DoorImport {
   const errors: string[] = [], ports: Port[] = [], newDoorTypes: DoorType[] = [], seen = new Set<string>()
   for (const { name, box } of markers) {
     if (!isId(name)) { errors.push(`Door mesh "${name}" is not a valid port ID: start with a letter; use letters, numbers, _ or -`); continue }
@@ -55,7 +56,7 @@ export function portsFromDoorMarkers(bounds: Bounds, markers: DoorMarker[], door
     if (face.distance > DOOR_FACE_TOLERANCE) { errors.push(`Door mesh "${name}" is not on a side face of the model`); continue }
     const width = Math.round(face.edge === 'N' || face.edge === 'S' ? box.maxX - box.minX : box.maxZ - box.minZ), height = Math.round(box.maxY - box.minY)
     if (width <= 0 || height <= 0) { errors.push(`Door mesh "${name}" has no width or height on its face`); continue }
-    const placement = portAtBoundary(bounds, x, y, z, DOOR_FACE_TOLERANCE)
+    const placement = portAtBoundary(bounds, x, y, z, DOOR_FACE_TOLERANCE, top)
     if (!placement || placement.edge !== face.edge) { errors.push(`Door mesh "${name}" is not on a side face of the model`); continue }
     let door = [...doorTypes, ...newDoorTypes].find(type => sameDoorSize(type, { width, height }))
     if (!door) {

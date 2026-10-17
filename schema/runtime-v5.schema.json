@@ -184,6 +184,7 @@
         "id",
         "typeId",
         "bounds",
+        "reservedAbove",
         "ports"
       ],
       "properties": {
@@ -195,6 +196,18 @@
         },
         "bounds": {
           "$ref": "#/$defs/bounds"
+        },
+        "reservedAbove": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ],
+          "description": "Space kept empty above the bounds: 0 = none, a number = millimetres, null = open to the sky. It counts as occupied for overlap, and side faces extend up through it (port centres may sit there)"
         },
         "ports": {
           "type": "array",

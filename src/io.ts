@@ -49,7 +49,8 @@ export function fbxModelNames(buffer: ArrayBuffer): string[] {
   walk(27, bytes.length, false)
   return names
 }
-export type FbxAnalysis = { moduleId: string; typeHint: string; bounds: Bounds; markers: DoorMarker[]; mainFound: boolean }
+// `doorsAbove` is true when a door mesh's centre is above the body's top, which suggests an open-top module.
+export type FbxAnalysis = { moduleId: string; typeHint: string; bounds: Bounds; markers: DoorMarker[]; mainFound: boolean; doorsAbove: boolean }
 // Reads an FBX for auto-setup. The mesh named like the file is the module; meshes with "door" in their name mark ports
 // and never enlarge the occupancy box. All names are the originals from the file. Distances are model millimetres.
 export async function analyzeFbx(file: File): Promise<FbxAnalysis> {
@@ -71,7 +72,8 @@ export async function analyzeFbx(file: File): Promise<FbxAnalysis> {
   const box = body.reduce((all, mesh) => all.union(mesh.box), new Box3())
   const bounds = toBounds(box)
   if (bounds.minX >= bounds.maxX || bounds.minZ >= bounds.maxZ) throw new Error('Model has no X-Z footprint')
-  return { moduleId, typeHint: moduleId.split('_')[0], bounds, mainFound: main.length > 0, markers: meshes.filter(mesh => isDoor(mesh.name)).map(mesh => ({ name: mesh.name, box: toBounds(mesh.box) })) }
+  const markers = meshes.filter(mesh => isDoor(mesh.name)).map(mesh => ({ name: mesh.name, box: toBounds(mesh.box) }))
+  return { moduleId, typeHint: moduleId.split('_')[0], bounds, mainFound: main.length > 0, markers, doorsAbove: markers.some(marker => (marker.box.minY + marker.box.maxY) / 2 > bounds.maxY) }
 }
 export async function importFbx(file: File): Promise<Bounds> {
   return (await analyzeFbx(file)).bounds

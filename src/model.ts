@@ -12,7 +12,9 @@ export type ModuleType = {
   percent: number
   requiredMin: number
 }
-export type Module = { id: string; typeId: string; bounds: Bounds; ports: Port[] }
+// `reservedAbove` keeps space empty above the box: 0 = none, a number = that many millimetres, null = open to the sky.
+// Side faces extend up through it (door centres may sit there), and the generator treats it as occupied.
+export type Module = { id: string; typeId: string; bounds: Bounds; reservedAbove: number | null; ports: Port[] }
 export type Connection = { from: string; to: string; weight: number }
 export type RuntimeProject = {
   schemaVersion: typeof SCHEMA_VERSION
@@ -43,6 +45,8 @@ export function normalizeEditor(value: unknown): EditorState {
 }
 // Door sizes within this many millimetres count as the same door type when importing.
 export const DOOR_MATCH_TOLERANCE = 20
+export const faceTop = (module: Pick<Module, 'bounds' | 'reservedAbove'>) => module.reservedAbove === null ? Infinity : module.bounds.maxY + module.reservedAbove
+export const occupiedBounds = (module: Pick<Module, 'bounds' | 'reservedAbove'>): Bounds => ({ ...module.bounds, maxY: faceTop(module) })
 export const doorTypeFor = (project: Pick<RuntimeProject, 'doorTypes'>, port: Pick<Port, 'doorTypeId'>) => project.doorTypes.find(door => door.id === port.doorTypeId)
 export const sameDoorSize = (a: Pick<DoorType, 'width' | 'height'>, b: Pick<DoorType, 'width' | 'height'>) => Math.abs(a.width - b.width) <= DOOR_MATCH_TOLERANCE && Math.abs(a.height - b.height) <= DOOR_MATCH_TOLERANCE
 // Default door type name from its size in whole centimetres, e.g. Door_400x400.
@@ -110,6 +114,8 @@ export function validateProject(project: RuntimeProject): string[] {
     modulesByType.set(module.typeId, (modulesByType.get(module.typeId) ?? 0) + 1)
     const b = module.bounds
     if (![b.minX, b.maxX, b.minY, b.maxY, b.minZ, b.maxZ].every(integer) || b.minX >= b.maxX || b.minY >= b.maxY || b.minZ >= b.maxZ) errors.push(`Module ${module.id} has invalid bounds`)
+    if (module.reservedAbove !== null && (!integer(module.reservedAbove) || module.reservedAbove < 0)) errors.push(`Module ${module.id} has an invalid space reserved above`)
+    const top = faceTop(module)
     const portIds = new Set<string>()
     for (const port of module.ports) {
       if (!isId(port.id) || portIds.has(port.id)) errors.push(`Module ${module.id} has an empty, invalid or duplicate port ID`)
@@ -123,7 +129,7 @@ export function validateProject(project: RuntimeProject): string[] {
         : port.edge === 'S' ? port.z === b.minZ && port.x >= b.minX && port.x <= b.maxX
           : port.edge === 'E' ? port.x === b.maxX && port.z >= b.minZ && port.z <= b.maxZ
             : port.x === b.minX && port.z >= b.minZ && port.z <= b.maxZ
-      if (!valid || port.y < b.minY || port.y > b.maxY) errors.push(`Port ${port.id} on module ${module.id} has its centre off its side face`)
+      if (!valid || port.y < b.minY || port.y > top) errors.push(`Port ${port.id} on module ${module.id} has its centre off its side face`)
     }
   }
   for (const type of project.types) if ((targets[type.id] ?? 0) > 0 && !modulesByType.has(type.id)) errors.push(`Type ${type.id} has target slots but no modules`)
@@ -152,6 +158,10 @@ export function parseRuntime(value: unknown): RuntimeProject {
   for (const m of project.modules) {
     if (!object(m) || typeof m.id !== 'string' || typeof m.typeId !== 'string' || !object(m.bounds) || ['minX', 'maxX', 'minY', 'maxY', 'minZ', 'maxZ'].some(k => typeof m.bounds[k as keyof Bounds] !== 'number') || !Array.isArray(m.ports) || m.ports.some((p: Port) => !object(p) || typeof p.id !== 'string' || typeof p.edge !== 'string' || typeof p.doorTypeId !== 'string' || typeof p.x !== 'number' || typeof p.y !== 'number' || typeof p.z !== 'number' || !(p.allowedTypeIds === null || Array.isArray(p.allowedTypeIds) && p.allowedTypeIds.every(id => typeof id === 'string')))) throw new Error('Invalid module data')
   }
+  for (const m of project.modules) {
+    if (m.reservedAbove === undefined) m.reservedAbove = 0
+    else if (m.reservedAbove !== null && typeof m.reservedAbove !== 'number') throw new Error('Invalid module data')
+  }
   for (const c of project.connections) if (!object(c) || typeof c.from !== 'string' || typeof c.to !== 'string' || typeof c.weight !== 'number') throw new Error('Invalid connection data')
   return project
 }
@@ -172,7 +182,7 @@ export function exampleProject(): RuntimeProject {
   const bounds = { minX: -4000, maxX: 4000, minY: 0, maxY: 3000, minZ: -4000, maxZ: 4000 }
   const door = 'Door_100x100'
   const ports = (): Port[] => [{ id: 'north', edge: 'N', doorTypeId: door, x: 0, y: 1500, z: 4000, allowedTypeIds: null }, { id: 'east', edge: 'E', doorTypeId: door, x: 4000, y: 1500, z: 0, allowedTypeIds: null }, { id: 'south', edge: 'S', doorTypeId: door, x: 0, y: 1500, z: -4000, allowedTypeIds: null }, { id: 'west', edge: 'W', doorTypeId: door, x: -4000, y: 1500, z: 0, allowedTypeIds: null }]
-  const module = (id: string, typeId: string): Module => ({ id, typeId, bounds: { ...bounds }, ports: ports() })
+  const module = (id: string, typeId: string): Module => ({ id, typeId, bounds: { ...bounds }, reservedAbove: 0, ports: ports() })
   const project: RuntimeProject = {
     schemaVersion: SCHEMA_VERSION,
     settings: { modulesAfterStart: 9, startTypeId: 'entrance' },

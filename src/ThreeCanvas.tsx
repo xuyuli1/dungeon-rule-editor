@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { nearestValidPort, portAtBoundary } from './geometry'
 import { previewDoors, rotatedBounds, type PreviewResult } from './generator'
 import { CAMERA_SPEED_MAX, CAMERA_SPEED_MIN, defaultCameraSpeeds, getCameraSpeeds, setCameraSpeeds, subscribeCameraSpeeds, useCameraSpeeds, type CameraSpeeds } from './cameraSettings'
-import type { Bounds, DoorType, Module, Port, RuntimeProject } from './model'
+import { faceTop, type Bounds, type DoorType, type Module, type Port, type RuntimeProject } from './model'
 
 type PortPoint = Pick<Port, 'edge' | 'x' | 'y' | 'z'>
 type Props = {
@@ -63,6 +63,21 @@ function addBox(group: THREE.Group, b: Bounds, color: string, id: string, pickab
   edges.position.copy(center); group.add(edges)
   if (label) { const sprite = makeLabel(label, .045); sprite.position.set(center.x, m(b.maxY) + .3, center.z); sprite.visible = false; mesh.userData.label = sprite; group.add(sprite) }
   return mesh
+}
+// Draws the space a module keeps empty above its box as a dashed column. It is not pickable and not part of Fit;
+// "open to sky" is drawn to a fixed display height with a label instead of an infinite column.
+const SKY_DISPLAY_HEIGHT = 6000
+function addReserve(group: THREE.Group, b: Bounds, reservedAbove: number | null, color: string) {
+  if (reservedAbove === 0) return
+  const y0 = m(b.maxY), y1 = y0 + m(reservedAbove ?? SKY_DISPLAY_HEIGHT), x0 = m(b.minX), x1 = m(b.maxX), z0 = m(b.minZ), z1 = m(b.maxZ)
+  const corners: [number, number][] = [[x0, z0], [x1, z0], [x1, z1], [x0, z1]]
+  const points = corners.flatMap(([x, z]) => [x, y0, z, x, y1, z])
+  if (reservedAbove !== null) corners.forEach(([x, z], i) => { const [nx, nz] = corners[(i + 1) % 4]; points.push(x, y1, z, nx, y1, nz) })
+  const geometry = new THREE.BufferGeometry(); geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3))
+  const lines = new THREE.LineSegments(geometry, new THREE.LineDashedMaterial({ color, dashSize: .4, gapSize: .3, transparent: true, opacity: .6 }))
+  lines.computeLineDistances(); lines.raycast = () => {}
+  group.add(lines)
+  if (reservedAbove === null) { const label = makeLabel('Open to sky ↑', .04); label.position.set((x0 + x1) / 2, y1, (z0 + z1) / 2); group.add(label) }
 }
 function frame(port: PortPoint, width: number, height: number, connected: boolean, id?: string): THREE.Group {
   const group = new THREE.Group()
@@ -191,8 +206,8 @@ export function ThreeCanvas(props: Props) {
       if (Math.abs(normal.y) > .5) return null
       const x = Math.round(hit.point.x * 1000), y = Math.round(hit.point.y * 1000), z = Math.round(hit.point.z * 1000)
       return nearest
-        ? nearestValidPort(module.bounds, x, y, z)
-        : portAtBoundary(module.bounds, x, y, z, 3)
+        ? nearestValidPort(module.bounds, x, y, z, faceTop(module))
+        : portAtBoundary(module.bounds, x, y, z, 3, faceTop(module))
     }
     const showGhost = (point: PortPoint | null) => {
       if (ghost.current) { state.scene.remove(ghost.current); disposeTree(ghost.current); ghost.current = null }
@@ -286,6 +301,7 @@ export function ThreeCanvas(props: Props) {
     const { module, project, result, doorTypes } = props
     if (module) {
       state.box = addBox(state.content, module.bounds, '#8ed6e5', module.id, true)
+      addReserve(state.content, module.bounds, module.reservedAbove, '#8ed6e5')
       state.picks.push(state.box); state.bounds.copy(box3(module.bounds))
       for (const port of module.ports) { const door = doorTypes.find(d => d.id === port.doorTypeId); const shape = frame(port, door?.width ?? 0, door?.height ?? 0, true, port.id); state.content.add(shape); state.picks.push(shape) }
       if (selectedPortRef.current && !module.ports.some(port => port.id === selectedPortRef.current)) setSelectedPort('')
@@ -297,7 +313,9 @@ export function ThreeCanvas(props: Props) {
         const module = modules.get(placement.moduleId)
         if (!module) continue
         const bounds = rotatedBounds(module.bounds, placement.rotation, placement.x, placement.y, placement.z)
-        const mesh = addBox(state.content, bounds, types.get(placement.typeId)?.color ?? '#91e6dc', placement.instanceId, true, placement.moduleId)
+        const color = types.get(placement.typeId)?.color ?? '#91e6dc'
+        const mesh = addBox(state.content, bounds, color, placement.instanceId, true, placement.moduleId)
+        addReserve(state.content, bounds, module.reservedAbove, color)
         state.picks.push(mesh); state.bounds.union(box3(bounds))
       }
       for (const door of previewDoors(project, result.placements)) state.content.add(frame(door, door.width, door.height, door.connected))

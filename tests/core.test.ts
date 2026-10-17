@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import JSZip from 'jszip'
-import { emptyEditor, emptyProject, exampleProject, exportRules, normalizeEditor, parseRuntime, typeTargets, validateProject, type Bounds, type RuntimeProject } from '../src/model'
+import { emptyEditor, emptyProject, exampleProject, exportRules, normalizeEditor, occupiedBounds, parseRuntime, typeTargets, validateProject, type Bounds, type RuntimeProject } from '../src/model'
 import { generate, overlaps, previewDoors, rotatedBounds, rotate } from '../src/generator'
 import { nearestValidPort, portAtBoundary, portsFromDoorMarkers, remapPorts } from '../src/geometry'
 import { buildProjectZip, fbxMetersPerUnit, fbxModelNames, openProject, type FbxAnalysis } from '../src/io'
@@ -11,7 +11,7 @@ import { nextTypeColor, typeColorSwatches } from '../src/typeColors'
 // A 6 x 4 x 6 m room centred on the origin, as door markers would see it (millimetres).
 const room: Bounds = { minX: -3000, maxX: 3000, minY: 0, maxY: 4000, minZ: -3000, maxZ: 3000 }
 const marker = (name: string, box: Bounds) => ({ name, box })
-const analysis = (moduleId: string, markers: FbxAnalysis['markers']): FbxAnalysis => ({ moduleId, typeHint: moduleId.split('_')[0], bounds: room, markers, mainFound: true })
+const analysis = (moduleId: string, markers: FbxAnalysis['markers'], bounds: Bounds = room): FbxAnalysis => ({ moduleId, typeHint: moduleId.split('_')[0], bounds, markers, mainFound: true, doorsAbove: markers.some(m => (m.box.minY + m.box.maxY) / 2 > bounds.maxY) })
 
 describe('v5 map rules', () => {
   it('keeps preset and generated type colors distinct', () => {
@@ -210,6 +210,48 @@ describe('v5 map rules', () => {
     const objects = record('Objects', new Uint8Array(0), new Uint8Array([...model, ...new Uint8Array(13)]), 27)
     const file = new Uint8Array([...header, ...objects, ...new Uint8Array(13)])
     expect(fbxModelNames(file.buffer)).toEqual(['Room_Door01'])
+  })
+  it('keeps the space reserved above a module empty and lets its faces extend into it', () => {
+    // Rooftop-like slab: 1.5 m tall body, door centre at 2.1 m on the +Z face.
+    const slab: Bounds = { minX: -20500, maxX: 20500, minY: 0, maxY: 1500, minZ: -20500, maxZ: 20500 }
+    const door = marker('Rooftop_Door', { minX: -2000, maxX: 2000, minY: 100, maxY: 4100, minZ: 20500, maxZ: 20500 })
+    expect(portsFromDoorMarkers(slab, [door], []).errors[0]).toContain('not on a side face')
+    expect(portsFromDoorMarkers(slab, [door], [], Infinity).ports[0]).toMatchObject({ id: 'Rooftop_Door', edge: 'N', y: 2100, z: 20500 })
+    const imported = applyImports(emptyProject(), [{ fileName: 'Rooftop.fbx', analysis: analysis('Rooftop', [door], slab), target: { kind: 'new', typeId: 'Rooftop' }, reservedAbove: null }])
+    expect(imported.outcomes[0].ok).toBe(true)
+    expect(imported.project.modules[0].reservedAbove).toBeNull()
+    expect(analysis('Rooftop', [door], slab).doorsAbove).toBe(true)
+    // Validation: a centre above the body is only valid inside the reserved space.
+    const project = exampleProject()
+    project.modules[0].ports[0].y = 3500
+    expect(validateProject(project).some(error => error.includes('centre off its side face'))).toBe(true)
+    project.modules[0].reservedAbove = 1000
+    expect(validateProject(project)).toEqual([])
+    project.modules[0].reservedAbove = -5
+    expect(validateProject(project).some(error => error.includes('space reserved above'))).toBe(true)
+    // Overlap: a module directly above is blocked by open sky, allowed above a custom reserve.
+    const base = { bounds: { minX: 0, maxX: 2000, minY: 0, maxY: 3000, minZ: 0, maxZ: 2000 } }
+    const above = { minX: 0, maxX: 2000, minY: 6000, maxY: 9000, minZ: 0, maxZ: 2000 }
+    expect(overlaps(occupiedBounds({ ...base, reservedAbove: 0 }), above)).toBe(false)
+    expect(overlaps(occupiedBounds({ ...base, reservedAbove: null }), above)).toBe(true)
+    expect(overlaps(occupiedBounds({ ...base, reservedAbove: 3000 }), above)).toBe(false)
+    expect(overlaps(occupiedBounds({ ...base, reservedAbove: 3500 }), above)).toBe(true)
+    // Older v5 data without the field reads as Normal.
+    const exported = JSON.parse(JSON.stringify(exportRules(exampleProject())))
+    delete exported.modules[0].reservedAbove
+    expect(parseRuntime(exported).modules[0].reservedAbove).toBe(0)
+  })
+  it('never places a module above an open-to-sky start', () => {
+    const project = exampleProject()
+    project.settings.modulesAfterStart = 6
+    const result = generate({ ...project, modules: project.modules.map(m => m.typeId === 'entrance' ? { ...m, reservedAbove: null } : m) }, 7)
+    const start = result.placements[0]
+    const startBox = project.modules.find(m => m.id === start.moduleId)!.bounds
+    for (const p of result.placements.slice(1)) {
+      const box = rotatedBounds(project.modules.find(m => m.id === p.moduleId)!.bounds, p.rotation, p.x, p.y, p.z)
+      const overHead = box.minY >= startBox.maxY && box.minX < startBox.maxX && box.maxX > startBox.minX && box.minZ < startBox.maxZ && box.maxZ > startBox.minZ
+      expect(overHead).toBe(false)
+    }
   })
   it('exports only v5 map data and rejects older versions', () => {
     const project = exampleProject()

@@ -3,7 +3,7 @@ import { ReactFlow, Background, Controls, type Edge as FlowEdge, type Node as Fl
 import { RelationEdge } from './RelationEdge'
 import { renameType } from './editorActions'
 import { analyzeFbx, collectFbxFiles, downloadJson, fbxStem, isFbxName, openProject, readJson, saveProject, type FbxAnalysis } from './io'
-import { doorTypeFor, doorTypeName, emptyEditor, emptyProject, exampleProject, isId, meters, relationKey, sameDoorSize, toMm, type Bounds, type DoorType, type Edge, type EditorState, type Module, type ModuleType, type PanelRef, type Port, type RuntimeProject, validateProject, typeTargets } from './model'
+import { doorTypeFor, doorTypeName, faceTop, emptyEditor, emptyProject, exampleProject, isId, meters, relationKey, sameDoorSize, toMm, type Bounds, type DoorType, type Edge, type EditorState, type Module, type ModuleType, type PanelRef, type Port, type RuntimeProject, validateProject, typeTargets } from './model'
 import { type PreviewResult } from './generator'
 import { portAtBoundary, portsFromDoorMarkers } from './geometry'
 import { applyImports, type ImportRequest } from './importer'
@@ -69,7 +69,7 @@ function PortFields({ port, module, project, onChange }: { port: Port; module: M
   const commitPosition = () => {
     if (!positionDirty) return
     if (![x, y, z].every(value => /^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim()))) { setError('Enter valid X, Y and Z coordinates.'); resetPosition(); return }
-    const placement = portAtBoundary(module.bounds, toMm(Number(x)), toMm(Number(y)), toMm(Number(z)))
+    const placement = portAtBoundary(module.bounds, toMm(Number(x)), toMm(Number(y)), toMm(Number(z)), 0, faceTop(module))
     if (!placement) { setError('The door centre must be on a vertical side face.'); resetPosition(); return }
     setError('')
     if (placement.edge === port.edge && placement.x === port.x && placement.y === port.y && placement.z === port.z) resetPosition()
@@ -142,6 +142,9 @@ export default function App() {
   const parsing = useRef(new Set<string>())
   const projectRef = useRef(project); projectRef.current = project
   const [newPortDoorId, setNewPortDoorId] = useState('')
+  // "Open to sky" choices per Models row; unset rows follow the suggestion (door meshes above the body's top).
+  const [libraryOpenTop, setLibraryOpenTop] = useState<Record<string, boolean>>({})
+  const openTopFor = (name: string) => { const info = libraryInfo.get(name); return libraryOpenTop[name] ?? (!!info && !('error' in info) && info.doorsAbove) }
 
   useEffect(() => {
     let cancelled = false
@@ -300,11 +303,14 @@ export default function App() {
     return done.map(o => o.moduleId)
   }
   // Imports one FBX: module ID from the file name, ports from its door meshes. Returns whether it succeeded.
-  const importModuleFile = async (file: File, mode: FbxMode, known?: FbxAnalysis): Promise<boolean> => {
+  // Without an explicit choice, a model whose doors rise above its body becomes open to sky (new modules only).
+  const importModuleFile = async (file: File, mode: FbxMode, known?: FbxAnalysis, openTop?: boolean): Promise<boolean> => {
     if (!isFbxName(file.name)) { setNotice('Import failed: only .fbx files are supported'); return false }
     let analysis = known
     try { analysis ??= await analyzeFbx(file) } catch (error) { setNotice(`Import failed: ${file.name}: ${errorText(error)}`); return false }
-    const [id] = runImports([{ fileName: file.name, analysis, target: mode }], new Map([[file.name, file]]))
+    const sky = openTop ?? analysis.doorsAbove
+    const reservedAbove = sky ? null : mode.kind === 'new' ? 0 : undefined
+    const [id] = runImports([{ fileName: file.name, analysis, target: mode, reservedAbove }], new Map([[file.name, file]]))
     if (id) openModule(id)
     return !!id
   }
@@ -326,17 +332,18 @@ export default function App() {
   const removeFromLibrary = (name: string) => {
     setLibrary(current => { const next = new Map(current); next.delete(name); return next })
     setLibraryInfo(current => { const next = new Map(current); next.delete(name); return next })
+    setLibraryOpenTop(current => { if (!(name in current)) return current; const next = { ...current }; delete next[name]; return next })
   }
   const assignFromLibrary = async (name: string, mode: FbxMode) => {
     const file = library.get(name), info = libraryInfo.get(name)
     if (!file) return
     if (info && 'error' in info) { setNotice(`Import failed: ${name}: ${info.error}`); return }
-    if (await importModuleFile(file, mode, info)) removeFromLibrary(name)
+    if (await importModuleFile(file, mode, info, openTopFor(name))) removeFromLibrary(name)
   }
   // Assigns every readable model to the type named before the first "_" of its file name, creating missing types.
   const autoAssignAll = () => {
     const requests: ImportRequest[] = []
-    for (const [name] of library) { const info = libraryInfo.get(name); if (info && !('error' in info)) requests.push({ fileName: name, analysis: info, target: { kind: 'new', typeId: info.typeHint } }) }
+    for (const [name] of library) { const info = libraryInfo.get(name); if (info && !('error' in info)) requests.push({ fileName: name, analysis: info, target: { kind: 'new', typeId: info.typeHint }, reservedAbove: openTopFor(name) ? null : 0 }) }
     if (!requests.length) { setNotice('No readable models to assign yet'); return }
     runImports(requests, library).forEach(id => { const done = requests.find(r => r.analysis.moduleId === id); if (done) removeFromLibrary(done.fileName) })
   }
@@ -384,7 +391,7 @@ export default function App() {
       for (const p of m.ports) {
         if (p.edge === 'N' || p.edge === 'S') { p.z = p.edge === 'N' ? b.maxZ : b.minZ; p.x = Math.round(Math.max(b.minX, Math.min(b.maxX, p.x))) }
         else { p.x = p.edge === 'E' ? b.maxX : b.minX; p.z = Math.round(Math.max(b.minZ, Math.min(b.maxZ, p.z))) }
-        p.y = Math.round(Math.max(b.minY, Math.min(b.maxY, p.y)))
+        p.y = Math.round(Math.max(b.minY, Math.min(faceTop(m), p.y)))
       }
     })
   }
@@ -453,7 +460,7 @@ export default function App() {
       <section className="editor-panel models-panel" aria-label="Models" onDragOver={e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault() }} onDrop={e => { if (!e.dataTransfer.types.includes('Files')) return; e.preventDefault(); void collectFbxFiles(e.dataTransfer).then(addToLibrary).catch(error => setNotice(`Import failed: ${errorText(error)}`)) }}>
         <div className="panel-heading"><div><span className="eyebrow">02</span><h2>Models</h2></div><div className="panel-actions"><button onClick={() => libraryFolderInput.current?.click()}>Upload folder</button><button onClick={() => libraryFilesInput.current?.click()}>Add FBX files</button>{library.size > 0 && <button className="primary" onClick={autoAssignAll}>Auto-assign all</button>}</div></div>
         <p className="hint">Drop a folder or FBX files here. Each model is recognised from its names: the file name is the module ID, the text before the first “_” is its type, and meshes with “Door” in their name become ports. Press Auto-assign all, pick a type and press Assign, or drag a row onto a type's “+ Add module” slot.</p>
-        {library.size ? <div className="library-list">{[...library.keys()].map(name => <LibraryRow key={name} name={name} info={libraryInfo.get(name)} project={project} onAssign={typeId => void assignFromLibrary(name, { kind: 'new', typeId })} onRemove={() => removeFromLibrary(name)} />)}</div> : <div className="library-empty">No unassigned models</div>}
+        {library.size ? <div className="library-list">{[...library.keys()].map(name => <LibraryRow key={name} name={name} info={libraryInfo.get(name)} project={project} openTop={openTopFor(name)} onOpenTop={value => setLibraryOpenTop(current => ({ ...current, [name]: value }))} onAssign={typeId => void assignFromLibrary(name, { kind: 'new', typeId })} onRemove={() => removeFromLibrary(name)} />)}</div> : <div className="library-empty">No unassigned models</div>}
       </section>
       </div>
       <div className="preview-column">
@@ -498,7 +505,7 @@ export default function App() {
         if (!source || !door) return undefined
         const nextId = uniqueId(m.ports.map(p => p.id), source.id), width = door.width
         const alongX = source.edge === 'N' || source.edge === 'S'
-        const placement = [width, -width].map(offset => portAtBoundary(m.bounds, source.x + (alongX ? offset : 0), source.y, source.z + (alongX ? 0 : offset))).find(p => p?.edge === source.edge)
+        const placement = [width, -width].map(offset => portAtBoundary(m.bounds, source.x + (alongX ? offset : 0), source.y, source.z + (alongX ? 0 : offset), 0, faceTop(m))).find(p => p?.edge === source.edge)
         updateModule(m.id, draft => { draft.ports.push({ ...source, ...(placement ?? {}), id: nextId, allowedTypeIds: source.allowedTypeIds && [...source.allowedTypeIds] }) })
         return nextId
       }
@@ -508,8 +515,9 @@ export default function App() {
       return <InspectorPanel key="inspector" phase={panelPhase} kind="Module" title={m.id} onClose={closePanel}>
         <p className="hint">{editor.modelNames[m.id] ? `Model file: ${editor.modelNames[m.id]}` : 'No FBX loaded. Bounds remain editable.'}</p><div className="section-head"><h3>Model & footprint</h3><button className="danger-text" onClick={() => removeModule(m.id)}>Delete module</button></div>
         <div className="fbx-drop" onDragOver={e => e.preventDefault()} onDrop={e => dropFbx(e, { kind: 'replace', moduleId: m.id })}><strong>Replace model</strong><span className="hint">Drop an FBX or a Models row here. The module takes the new file's name as its ID and its ports are rebuilt from the new file's door meshes.</span><div className="fbx-drop-actions"><button onClick={() => chooseFbx({ kind: 'replace', moduleId: m.id })}>Choose FBX</button>{library.size > 0 && <select aria-label="Replace from Models" value="" onChange={e => { if (e.target.value) void assignFromLibrary(e.target.value, { kind: 'replace', moduleId: m.id }) }}><option value="">From Models…</option>{[...library.keys()].map(name => <option key={name} value={name}>{fbxStem(name)}</option>)}</select>}</div></div>
-        <Field label="Type"><select value={m.typeId} onChange={e => updateModule(m.id, draft => { draft.typeId = e.target.value })}>{project.types.map(t => <option key={t.id} value={t.id}>{t.id}</option>)}</select></Field>
-        <div className="row three"><div className="metric"><span>Width X</span><strong>{meters(m.bounds.maxX - m.bounds.minX)} m</strong></div><div className="metric"><span>Height Y</span><strong>{meters(m.bounds.maxY - m.bounds.minY)} m</strong></div><div className="metric"><span>Depth Z</span><strong>{meters(m.bounds.maxZ - m.bounds.minZ)} m</strong></div></div>
+        <div className="row two"><Field label="Type"><select value={m.typeId} onChange={e => updateModule(m.id, draft => { draft.typeId = e.target.value })}>{project.types.map(t => <option key={t.id} value={t.id}>{t.id}</option>)}</select></Field>
+          <ReservedAboveField module={m} onChange={value => updateModule(m.id, draft => { draft.reservedAbove = value })} /></div>
+        <div className="row three"><div className="metric"><span>Width X</span><strong>{meters(m.bounds.maxX - m.bounds.minX)} m</strong></div><div className="metric"><span>Height Y</span><strong>{meters(m.bounds.maxY - m.bounds.minY)} m</strong>{m.reservedAbove !== 0 && <small className="metric-note">{m.reservedAbove === null ? '+ open to sky' : `+ ${meters(m.reservedAbove)} m reserved`}</small>}</div><div className="metric"><span>Depth Z</span><strong>{meters(m.bounds.maxZ - m.bounds.minZ)} m</strong></div></div>
         <section className="subsection"><h3>3D bounds & connectors</h3><Field label="Door type for new ports"><select value={newPortDoor?.id ?? ''} disabled={!project.doorTypes.length} onChange={e => setNewPortDoorId(e.target.value)}>{!project.doorTypes.length && <option value="">Add a door type first</option>}{project.doorTypes.map(d => <option key={d.id} value={d.id}>{d.id} · {meters(d.width)} × {meters(d.height)} m</option>)}</select></Field><ThreeCanvas module={m} doorTypes={project.doorTypes} newPortDoor={newPortDoor} onPortChange={updatePort} onAddPort={point => { if (newPortDoor) updateModule(m.id, draft => { draft.ports.push({ id: uniqueId(draft.ports.map(p => p.id), 'port'), ...point, doorTypeId: newPortDoor.id, allowedTypeIds: null }) }) }} onDeletePort={removePort} onDuplicatePort={duplicatePort} onError={setNotice} portPanel={(portId, select) => { const port = m.ports.find(p => p.id === portId); return port && <PortFields key={port.id} port={port} module={m} project={project} onChange={next => { updatePort(port.id, next); if (next.id !== port.id) select(next.id) }} /> }} /></section>
         <details className="subsection advanced-bounds"><summary>Advanced · adjust bounds relative to model origin</summary><div className="row two">{(['minX', 'maxX', 'minY', 'maxY', 'minZ', 'maxZ'] as const).map(key => <NumberField key={`${m.id}-${key}`} label={key} value={m.bounds[key] / 1000} step={0.001} suffix="m" validate={n => { const mm = toMm(n); const axis = key.slice(-1) as 'X' | 'Y' | 'Z'; const other = key.startsWith('min') ? m.bounds[`max${axis}`] : m.bounds[`min${axis}`]; return key.startsWith('min') ? mm >= other ? 'Minimum must be below maximum' : undefined : mm <= other ? 'Maximum must exceed minimum' : undefined }} onChange={n => setBounds(m.id, key, n)} />)}</div></details>
         <section className="subsection"><h3>Ports</h3>{m.ports.map(port => <PortEditor key={port.id} port={port} module={m} project={project} onChange={next => updatePort(port.id, next)} onDuplicate={() => duplicatePort(port.id)} onDelete={() => removePort(port.id)} />)}{!m.ports.length && <p className="empty">Add a port on the canvas above.</p>}</section>
@@ -520,22 +528,31 @@ export default function App() {
 }
 
 // A Models row. Names come from the file and are never edited here: a bad name must be fixed in the source file.
-function LibraryRow({ name, info, project, onAssign, onRemove }: { name: string; info: LibraryInfo | undefined; project: RuntimeProject; onAssign: (typeId: string) => void; onRemove: () => void }) {
+function LibraryRow({ name, info, project, openTop, onOpenTop, onAssign, onRemove }: { name: string; info: LibraryInfo | undefined; project: RuntimeProject; openTop: boolean; onOpenTop: (value: boolean) => void; onAssign: (typeId: string) => void; onRemove: () => void }) {
   const analysis = info && !('error' in info) ? info : undefined
   const id = analysis?.moduleId ?? fbxStem(name)
   const [typeChoice, setTypeChoice] = useState<string | null>(null)
   const typeId = typeChoice ?? analysis?.typeHint ?? ''
-  const doorErrors = analysis ? portsFromDoorMarkers(analysis.bounds, analysis.markers, project.doorTypes).errors : []
+  const doorErrors = analysis ? portsFromDoorMarkers(analysis.bounds, analysis.markers, project.doorTypes, openTop ? Infinity : analysis.bounds.maxY).errors : []
   const problem = !isId(id) ? `"${id}" is not a valid module ID: rename the file (start with a letter; use letters, numbers, _ or -)` : project.modules.some(m => m.id === id) ? `Module ${id} already exists` : !info ? 'Reading model…' : 'error' in info ? `Unreadable: ${info.error}` : doorErrors.join('; ')
   const ready = !problem && isId(typeId)
   const typeExists = project.types.some(t => t.id === typeId)
-  const summary = analysis ? `${footprint(analysis.bounds)} · ${analysis.markers.length} door${analysis.markers.length === 1 ? '' : 's'}${analysis.mainFound ? '' : ` · no mesh named ${id}`}` : ''
+  const summary = analysis ? `${footprint(analysis.bounds)} · ${analysis.markers.length} door${analysis.markers.length === 1 ? '' : 's'}${analysis.mainFound ? '' : ` · no mesh named ${id}`}${analysis.doorsAbove ? ' · doors reach above the model top: open to sky suggested' : ''}` : ''
   return <div className={`library-row ${problem ? 'has-problem' : ''}`} draggable={!problem} onDragStart={e => { e.dataTransfer.setData(LIBRARY_DRAG, name); e.dataTransfer.effectAllowed = 'copy' }}>
     <div className="library-main"><span className="library-file" title={name}>{id}</span><small className={problem ? 'library-status warn' : 'library-status'} title={problem || summary}>{problem || summary}</small></div>
     <select aria-label={`Type for ${name}`} value={typeId} onChange={e => setTypeChoice(e.target.value)}><option value="">Type…</option>{analysis && !project.types.some(t => t.id === analysis.typeHint) && <option value={analysis.typeHint}>{analysis.typeHint} (new)</option>}{project.types.map(t => <option key={t.id} value={t.id}>{t.id}</option>)}</select>
+    <label className="library-sky" title="Keep everything above this module empty; its side faces extend upward so doors may sit above the body's top"><input type="checkbox" checked={openTop} onChange={e => onOpenTop(e.target.checked)} />Open to sky</label>
     <button className="primary" disabled={!ready} title={typeExists ? undefined : 'Creates this type'} onClick={() => onAssign(typeId)}>Assign</button>
     <button className="icon danger" aria-label={`Remove ${name} from Models`} onClick={onRemove}>×</button>
   </div>
+}
+// Space kept empty above a module: Normal (0), Open to sky (null) or a custom height. Door centres may sit in this space.
+function ReservedAboveField({ module, onChange }: { module: Module; onChange: (value: number | null) => void }) {
+  const mode = module.reservedAbove === null ? 'sky' : module.reservedAbove === 0 ? 'normal' : 'custom'
+  return <div className="field reserved-above"><span>Space above</span><div className="reserved-above-inputs">
+    <select value={mode} onChange={e => onChange(e.target.value === 'sky' ? null : e.target.value === 'custom' ? 3000 : 0)}><option value="normal">Normal</option><option value="sky">Open to sky</option><option value="custom">Custom height</option></select>
+    {mode === 'custom' && <NumberField label="Height" value={(module.reservedAbove ?? 0) / 1000} min={0.001} step={0.001} suffix="m" onChange={n => onChange(toMm(n))} />}
+  </div></div>
 }
 // Door types: one per opening size. Renaming updates every port that uses the type; a type in use can't be deleted.
 function DoorTypes({ project, mutate }: { project: RuntimeProject; mutate: (change: (draft: RuntimeProject) => void) => void }) {
