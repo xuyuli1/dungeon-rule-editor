@@ -1,0 +1,120 @@
+/* Loaded last: shared type scale, readable UI font, and the inspector, Models and camera controls.
+   Text is never case-transformed, so IDs always appear exactly as typed. */
+:root {
+  --font-ui: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 15px;
+  --fs-lg: 18px;
+  --fs-xl: 24px;
+  --muted: #a9b8bb;
+  --panel: #13252e;
+  --panel-raised: #182c35;
+  --border: #354750;
+  --border-strong: #5b6f76;
+  --focus: #91e6dc;
+  --inspector-width: min(480px, 100vw);
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  letter-spacing: normal;
+}
+body, button, input, select, textarea { font-family: var(--font-ui); letter-spacing: normal; }
+h1, h2, h3 { text-transform: none; letter-spacing: .01em; }
+h3 { font: 600 var(--fs-md)/1.3 var(--font-ui); margin-bottom: 10px; }
+p { font-size: var(--fs-sm); }
+.hint, .empty { font-size: var(--fs-sm); color: var(--muted); }
+.field > span, .metric > span, .relation label { font: 600 var(--fs-xs)/1.3 var(--font-ui); color: #bccacc; letter-spacing: normal; }
+.field-error { font-size: var(--fs-xs); }
+.eyebrow { font: 600 var(--fs-xs) var(--mono); letter-spacing: .08em; color: #8fa3a8; }
+.badge { font: 600 var(--fs-xs) var(--font-ui); }
+button { font-size: var(--fs-sm); }
+input, select { font-size: var(--fs-sm); }
+.notice { font: var(--fs-sm)/1.4 var(--font-ui); }
+.menu-panel button { font: 500 var(--fs-md) var(--font-ui); letter-spacing: normal; }
+.menu-meta { font: var(--fs-xs)/1.7 var(--font-ui); }
+.save-indicator { font: var(--fs-xs) var(--font-ui); }
+
+/* Section titles keep the condensed display face; everything else uses the UI font. */
+.panel-heading { align-items: center; margin-bottom: 18px; }
+.panel-heading h1, .panel-heading h2 { font: 700 28px/1 var(--display); letter-spacing: .02em; }
+.panel-heading h2 { font-size: 24px; }
+.panel-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.graph-head { font: 600 var(--fs-xs) var(--font-ui); letter-spacing: normal; color: #b4c3c6; }
+.graph-node-content strong { font: 650 18px/1.15 var(--font-ui); letter-spacing: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-node-content span { font: var(--fs-xs)/1.3 var(--font-ui); }
+.module-slot strong { font: 600 var(--fs-xs) var(--mono); }
+.module-slot small, .slot-add small, .target-chip small { font: 11px var(--mono); }
+.slot-add strong { font-size: var(--fs-xs); }
+.target-chip { font-size: var(--fs-sm); }
+.targets-block h2 { font: 600 var(--fs-lg) var(--font-ui); }
+.results-panel .stats span { font-size: var(--fs-xs); color: var(--muted); }
+.graph-context-menu button { font: var(--fs-sm) var(--font-ui); }
+.connect-hint { font: var(--fs-xs) var(--font-ui); }
+.custom-color { font: var(--fs-xs) var(--font-ui); }
+.port-editor-head span, .xyz-input span { font-size: 11px; }
+.three-canvas-help { font-size: var(--fs-xs); color: #b6c9cc; }
+.three-selection { font: var(--fs-xs) var(--mono); }
+
+/* Layout: rules, composition and Models on the left; preview and generation on the right. */
+.main-column { display: grid; gap: 16px; min-width: 0; }
+.editor-panel { border-color: var(--border); }
+.models-panel { padding: 20px 22px; }
+.models-panel .panel-heading { margin-bottom: 8px; }
+.models-panel > .hint { margin: 0 0 14px; }
+.library-empty { padding: 22px; border: 1px dashed var(--border-strong); color: var(--muted); font-size: var(--fs-sm); text-align: center; }
+.library-list { display: grid; gap: 6px; }
+.library-row { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(120px, 1fr) minmax(110px, .8fr) auto auto; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); background: var(--panel-raised); cursor: grab; }
+.library-row.has-problem { cursor: default; border-color: #6d5a3a; }
+.library-row:active { cursor: grabbing; }
+.library-main { display: grid; gap: 2px; min-width: 0; }
+.library-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 var(--fs-sm) var(--mono); }
+.library-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--fs-xs); }
+.library-status.warn { color: #f5cf90; }
+.library-id { display: grid; gap: 2px; min-width: 0; }
+.library-id span { font-size: 11px; color: var(--muted); }
+.library-id input { padding: 6px 8px; font-family: var(--mono); }
+.library-row select { padding: 7px 8px; }
+.library-row button.primary { padding: 7px 12px; }
+@media (max-width: 760px) {
+  .library-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .library-main, .library-id { grid-column: 1 / -1; }
+  .library-row select { grid-column: 1 / 2; }
+}
+
+/* Docked inspector: every type, module and new-type view opens here, one at a time. */
+.inspector { position: fixed; z-index: 60; top: 0; right: 0; bottom: 0; width: var(--inspector-width); display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid #6f858b; box-shadow: -18px 0 50px #0008; animation: inspector-in .16s ease-out; }
+.inspector-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px; border-bottom: 1px solid #40565e; }
+.inspector-head > div { display: grid; gap: 3px; min-width: 0; }
+.inspector-kind { color: var(--muted); font: 600 var(--fs-xs) var(--font-ui); }
+.inspector-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 650 20px/1.2 var(--font-ui); color: #f4f8f6; }
+.inspector-head button.icon { font-size: 22px; }
+.inspector-body { flex: 1; min-height: 0; overflow-y: auto; padding: 18px; overscroll-behavior: contain; }
+.inspector-body .subsection { margin-top: 20px; }
+.inspector-body .list-item { justify-content: space-between; margin-bottom: 4px; }
+.inspector-body .three-canvas { height: 320px; }
+.inspector-body .three-canvas-shell { min-height: 0; }
+.fbx-drop .fbx-drop-actions { display: flex; gap: 8px; flex-wrap: wrap; width: 100%; }
+.fbx-drop .fbx-drop-actions select { width: auto; flex: 1; min-width: 150px; }
+@keyframes inspector-in { from { opacity: .6; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+@media (min-width: 1200px) {
+  .inspector-open .editor-workspace { width: calc(100% - var(--inspector-width)); margin: 0; }
+  .inspector-open .notice { right: calc(var(--inspector-width) + 24px); }
+}
+@media (max-width: 1199px) { .inspector-open .notice { z-index: 65; } }
+@media (prefers-reduced-motion: reduce) { .inspector { animation: none; } }
+
+/* 3D view toolbar and camera speed popover. */
+.three-canvas-toolbar button { font-size: var(--fs-xs); padding: 6px 10px; }
+.camera-popover { position: absolute; z-index: 5; top: 46px; right: 8px; width: min(260px, calc(100% - 16px)); display: grid; gap: 8px; padding: 12px; border: 1px solid #5b6f76; background: #13252ef2; box-shadow: 0 10px 30px #0009; }
+.camera-popover-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.camera-popover-head strong { font-size: var(--fs-sm); }
+.camera-popover-head span { color: var(--muted); font-size: 11px; }
+.camera-speed { display: grid; grid-template-columns: 52px minmax(0, 1fr) 40px; align-items: center; gap: 8px; font-size: var(--fs-xs); }
+.camera-speed input[type=range] { padding: 0; border: 0; background: transparent; box-shadow: none; accent-color: var(--focus); }
+.camera-speed output { font: var(--fs-xs) var(--mono); text-align: right; color: #d7e4e3; }
+.camera-popover > button { justify-self: end; padding: 5px 10px; font-size: var(--fs-xs); }
+
+/* The map preview stage stretches the 3D view to fill it, so its toolbar is never clipped. */
+.preview-panel .preview-stage { place-items: stretch; align-content: start; height: auto; }
+.preview-panel .preview-stage > .placeholder { align-self: center; justify-self: center; }
+.preview-panel .three-canvas-shell { min-height: 0; border: 0; }

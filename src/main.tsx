@@ -6,6 +6,7 @@ import './styles.css'
 import './grid-theme.css'
 import './responsive.css'
 import './single-workspace.css'
+import './theme.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode><App /></React.StrictMode>,

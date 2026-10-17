@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import JSZip from 'jszip'
-import { emptyEditor, exampleProject, exportRules, parseRuntime, typeTargets, validateProject, type RuntimeProject } from '../src/model'
+import { emptyEditor, exampleProject, exportRules, normalizeEditor, parseRuntime, typeTargets, validateProject, type RuntimeProject } from '../src/model'
 import { generate, overlaps, previewDoors, rotatedBounds, rotate } from '../src/generator'
 import { nearestValidPort, portAtBoundary, remapPorts } from '../src/geometry'
 import { buildProjectZip, fbxMetersPerUnit, openProject } from '../src/io'
@@ -124,7 +124,8 @@ describe('v4 map rules', () => {
   it('keeps directional weights when renaming a type', () => {
     const project = exampleProject()
     project.connections = [{ from: 'basic', to: 'special', weight: 3 }, { from: 'special', to: 'basic', weight: 1 }]
-    const changed = renameType(project, emptyEditor(), 'basic', 'z_basic')
+    const changed = renameType(project, { ...emptyEditor(), panel: { kind: 'type', id: 'basic' } }, 'basic', 'z_basic')
+    expect(changed.editor.panel).toEqual({ kind: 'type', id: 'z_basic' })
     expect(changed.project.connections).toEqual([{ from: 'z_basic', to: 'special', weight: 3 }, { from: 'special', to: 'z_basic', weight: 1 }])
   })
   it('stores v4 rules, layout and FBX bytes in a project ZIP', async () => {
@@ -138,7 +139,26 @@ describe('v4 map rules', () => {
     const reopened = await openProject(new File([await buildProjectZip(project, editor, new Map([['room_a', file]]))], 'project.zip'))
     expect(reopened.project.modules).toHaveLength(project.modules.length)
     expect(reopened.files.get('room_a')?.name).toBe('room_a.fbx')
+    expect(reopened.library.size).toBe(0)
     saved.version = 3; zip.file('project.json', JSON.stringify(saved))
     await expect(openProject(new File([await zip.generateAsync({ type: 'blob' })], 'old.zip'))).rejects.toThrow('requires v4')
+  })
+  it('keeps unassigned library models in the project ZIP', async () => {
+    const project = exampleProject(), editor = { ...emptyEditor(), libraryIds: { 'Stairs Room.fbx': 'stairsRoom' } }
+    const library = new Map([['Stairs Room.fbx', new Blob([new Uint8Array([4, 5])])], ['hall.fbx', new Blob([new Uint8Array([6])])]])
+    const reopened = await openProject(new File([await buildProjectZip(project, editor, new Map(), library)], 'project.zip'))
+    expect([...reopened.library.keys()]).toEqual(['Stairs Room.fbx', 'hall.fbx'])
+    expect(reopened.editor.libraryIds).toEqual({ 'Stairs Room.fbx': 'stairsRoom' })
+    expect([...new Uint8Array(await reopened.library.get('Stairs Room.fbx')!.arrayBuffer())]).toEqual([4, 5])
+    const zip = await JSZip.loadAsync(await buildProjectZip(project, editor, new Map(), library))
+    const saved = JSON.parse(await zip.file('project.json')!.async('text')) as { library?: unknown }
+    delete saved.library; zip.file('project.json', JSON.stringify(saved))
+    expect((await openProject(new File([await zip.generateAsync({ type: 'blob' })], 'older.zip'))).library.size).toBe(0)
+  })
+  it('opens editor state saved with floating windows as one inspector panel', () => {
+    const old = { graphPositions: {}, modelNames: {}, seed: 7, windows: [{ kind: 'module', id: 'room_a', x: 0, y: 0, width: 1, height: 1, z: 104 }, { kind: 'type', id: 'basic', x: 0, y: 0, width: 1, height: 1, z: 102 }] }
+    expect(normalizeEditor(old)).toEqual({ graphPositions: {}, modelNames: {}, libraryIds: {}, seed: 7, panel: { kind: 'module', id: 'room_a' } })
+    expect(normalizeEditor({ ...emptyEditor(), panel: { kind: 'type', id: 'basic' } }).panel).toEqual({ kind: 'type', id: 'basic' })
+    expect(() => normalizeEditor({ seed: 1 })).toThrow('Incomplete editor data')
   })
 })

@@ -1,4 +1,4 @@
-import { emptyEditor, exportRules, parseRuntime, SCHEMA_VERSION, toMm, type Bounds, type EditorState, type RuntimeProject } from './model'
+import { exportRules, normalizeEditor, parseRuntime, SCHEMA_VERSION, toMm, type Bounds, type EditorState, type RuntimeProject } from './model'
 
 export function download(blob: Blob, name: string): void {
   const url = URL.createObjectURL(blob)
@@ -33,8 +33,29 @@ export async function importFbx(file: File): Promise<Bounds> {
   if (bounds.minX >= bounds.maxX || bounds.minZ >= bounds.maxZ) throw new Error('Model has no X-Z footprint')
   return bounds
 }
-type SavedProject = { format: 'dungeon-editor-project'; version: 4; runtime: RuntimeProject; editor: EditorState; assets: Record<string, string> }
-export async function buildProjectZip(project: RuntimeProject, editor: EditorState, files: Map<string, Blob>): Promise<Blob> {
+export const isFbxName = (name: string) => name.toLowerCase().endsWith('.fbx')
+export const fbxStem = (name: string) => name.replace(/\.fbx$/i, '')
+// Collects every .fbx file from a drop, walking dropped folders (Chromium, Firefox and Safari expose them as entries).
+export async function collectFbxFiles(data: DataTransfer): Promise<File[]> {
+  const entries = Array.from(data.items).map(item => item.webkitGetAsEntry?.()).filter((entry): entry is FileSystemEntry => !!entry)
+  if (!entries.length) return Array.from(data.files).filter(file => isFbxName(file.name))
+  const files: File[] = []
+  const walk = async (entry: FileSystemEntry): Promise<void> => {
+    if (entry.isFile) { if (isFbxName(entry.name)) files.push(await new Promise<File>((resolve, reject) => (entry as FileSystemFileEntry).file(resolve, reject))); return }
+    const reader = (entry as FileSystemDirectoryEntry).createReader()
+    for (;;) {
+      const batch = await new Promise<FileSystemEntry[]>((resolve, reject) => reader.readEntries(resolve, reject))
+      if (!batch.length) break
+      for (const child of batch) await walk(child)
+    }
+  }
+  for (const entry of entries) await walk(entry)
+  return files
+}
+type LibraryEntry = { fileName: string; path: string }
+// `library` holds FBX files that are not assigned to a module yet; it is optional so older v4 ZIPs still open.
+type SavedProject = { format: 'dungeon-editor-project'; version: 4; runtime: RuntimeProject; editor: EditorState; assets: Record<string, string>; library?: LibraryEntry[] }
+export async function buildProjectZip(project: RuntimeProject, editor: EditorState, files: Map<string, Blob>, library: Map<string, Blob> = new Map()): Promise<Blob> {
   const { default: JSZip } = await import('jszip')
   const zip = new JSZip()
   const assets: Record<string, string> = {}
@@ -44,14 +65,15 @@ export async function buildProjectZip(project: RuntimeProject, editor: EditorSta
     assets[id] = path
     zip.file(path, file)
   }
-  const saved: SavedProject = { format: 'dungeon-editor-project', version: 4, runtime: project, editor, assets }
+  const libraryEntries = [...library].map(([fileName, file], i) => { const path = `library/${i + 1}.fbx`; zip.file(path, file); return { fileName, path } })
+  const saved: SavedProject = { format: 'dungeon-editor-project', version: 4, runtime: project, editor, assets, library: libraryEntries }
   zip.file('project.json', JSON.stringify(saved, null, 2))
   return zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } })
 }
-export async function saveProject(project: RuntimeProject, editor: EditorState, files: Map<string, File>): Promise<void> {
-  download(await buildProjectZip(project, editor, files), 'dungeon-editor-project.zip')
+export async function saveProject(project: RuntimeProject, editor: EditorState, files: Map<string, File>, library: Map<string, File>): Promise<void> {
+  download(await buildProjectZip(project, editor, files, library), 'dungeon-editor-project.zip')
 }
-export async function openProject(file: File): Promise<{ project: RuntimeProject; editor: EditorState; files: Map<string, File> }> {
+export async function openProject(file: File): Promise<{ project: RuntimeProject; editor: EditorState; files: Map<string, File>; library: Map<string, File> }> {
   const { default: JSZip } = await import('jszip')
   const zip = await JSZip.loadAsync(file)
   const manifest = zip.file('project.json')
@@ -62,8 +84,7 @@ export async function openProject(file: File): Promise<{ project: RuntimeProject
   if (saved.format !== 'dungeon-editor-project' || saved.version !== 4) throw new Error(`Unsupported project version ${String(saved.version)}; this editor requires v4`)
   const project = parseRuntime(saved.runtime)
   if (project.schemaVersion !== SCHEMA_VERSION) throw new Error('Runtime JSON version mismatch')
-  const editor = saved.editor && typeof saved.editor === 'object' ? saved.editor : emptyEditor()
-  if (!editor.graphPositions || !editor.modelNames || !Array.isArray(editor.windows) || !Number.isInteger(editor.seed)) throw new Error('Incomplete editor data')
+  const editor = normalizeEditor(saved.editor)
   const files = new Map<string, File>()
   for (const [id, path] of Object.entries(saved.assets ?? {})) {
     if (!project.modules.some(m => m.id === id) || !/^assets\/[A-Za-z][A-Za-z0-9_-]*\.fbx$/.test(path)) throw new Error('Invalid project asset path')
@@ -71,5 +92,12 @@ export async function openProject(file: File): Promise<{ project: RuntimeProject
     if (!entry) throw new Error(`Missing model file ${path}`)
     files.set(id, new File([await entry.async('blob')], editor.modelNames[id] || `${id}.fbx`, { type: 'application/octet-stream' }))
   }
-  return { project, editor, files }
+  const library = new Map<string, File>()
+  for (const item of Array.isArray(saved.library) ? saved.library : []) {
+    if (!item || typeof item.fileName !== 'string' || !isFbxName(item.fileName) || typeof item.path !== 'string' || !/^library\/\d+\.fbx$/.test(item.path)) throw new Error('Invalid library entry')
+    const entry = zip.file(item.path)
+    if (!entry) throw new Error(`Missing model file ${item.path}`)
+    library.set(item.fileName, new File([await entry.async('blob')], item.fileName, { type: 'application/octet-stream' }))
+  }
+  return { project, editor, files, library }
 }

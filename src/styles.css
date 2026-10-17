@@ -44,13 +44,13 @@ p { line-height: 1.5; }
 .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .brand-mark { width: 32px; height: 32px; display: grid; place-items: center; background: var(--ink); color: #fff; border-radius: 4px; font-size: 20px; flex: none; }
 .brand strong { display: block; font-size: 17px; letter-spacing: -.045em; white-space: nowrap; }
-.brand small { display: block; font: 9px var(--mono); letter-spacing: .06em; color: var(--muted); margin-top: 2px; text-transform: uppercase; white-space: nowrap; }
+.brand small { display: block; font: 9px var(--mono); letter-spacing: .06em; color: var(--muted); margin-top: 2px; white-space: nowrap; }
 .top-actions { display: flex; align-items: center; justify-content: flex-end; gap: 3px; flex-wrap: wrap; }
 .top-actions button { padding: 8px 10px; font-size: 11px; white-space: nowrap; }
 .top-actions .primary { margin-left: 7px; padding-inline: 15px; }
 .workspace { display: grid; grid-template-columns: 223px minmax(0, 1fr); flex: 1; min-height: 0; }
 .app-sidebar { display: flex; flex-direction: column; gap: 18px; border-right: 1px solid var(--line-strong); padding: 27px 12px 17px; }
-.side-heading, .side-foot > span, .eyebrow { font: 10px var(--mono); letter-spacing: .075em; color: #77746f; text-transform: uppercase; }
+.side-heading, .side-foot > span, .eyebrow { font: 10px var(--mono); letter-spacing: .075em; color: #77746f; }
 .side-heading { padding: 0 12px; }
 .tabs { display: flex; flex-direction: column; gap: 3px; }
 .tabs button { display: flex; align-items: center; gap: 13px; width: 100%; text-align: left; border: 1px solid transparent; border-radius: 5px; background: transparent; font-size: 13px; padding: 12px; }
@@ -88,7 +88,7 @@ p { line-height: 1.5; }
 .badge.good { color: #2e6250; border-color: #a7c5b8; background: #eaf4ed; }
 .badge.warn { color: #8a5d25; border-color: #d6c3a1; background: #f6f0e5; }
 .target-head, .target-row { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; align-items: center; gap: 10px; padding: 12px; border-bottom: 1px solid var(--line); }
-.target-head { font: 10px var(--mono); color: var(--muted); text-transform: uppercase; }
+.target-head { font: 10px var(--mono); color: var(--muted); }
 .target-row { font-size: 13px; }
 .target-row:last-child { border-bottom: 0; }
 .target-row span:first-child, .quota-line span { display: flex; align-items: center; gap: 9px; }

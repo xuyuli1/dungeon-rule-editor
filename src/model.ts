@@ -19,15 +19,26 @@ export type RuntimeProject = {
   connections: Connection[]
 }
 export type ExportedRules = Omit<RuntimeProject, 'types'> & { types: Omit<ModuleType, 'color'>[] }
-export type WindowLayout = { kind: 'type' | 'module' | 'create-type'; id: string; x: number; y: number; width: number; height: number; z: number }
-export type EditorState = { graphPositions: Record<string, { x: number; y: number }>; modelNames: Record<string, string>; windows: WindowLayout[]; seed: number }
+export type PanelRef = { kind: 'type' | 'module' | 'create-type'; id: string }
+// `libraryIds` holds module IDs edited in Models before assigning, keyed by library file name.
+export type EditorState = { graphPositions: Record<string, { x: number; y: number }>; modelNames: Record<string, string>; libraryIds: Record<string, string>; panel: PanelRef | null; seed: number }
 
 export const emptyProject = (): RuntimeProject => ({
   schemaVersion: SCHEMA_VERSION,
   settings: { modulesAfterStart: 20, startTypeId: '', doorWidth: 1000, doorHeight: 1000 },
   types: [], modules: [], connections: [],
 })
-export const emptyEditor = (): EditorState => ({ graphPositions: {}, modelNames: {}, windows: [], seed: 1 })
+export const emptyEditor = (): EditorState => ({ graphPositions: {}, modelNames: {}, libraryIds: {}, panel: null, seed: 1 })
+const panelKinds: PanelRef['kind'][] = ['type', 'module', 'create-type']
+const asPanel = (value: unknown): PanelRef | null => object(value) && panelKinds.includes(value.kind as PanelRef['kind']) && typeof value.id === 'string' ? { kind: value.kind as PanelRef['kind'], id: value.id } : null
+// Accepts saved editor state, including drafts and ZIPs from before the inspector panel, which stored floating `windows`.
+export function normalizeEditor(value: unknown): EditorState {
+  if (!object(value) || !object(value.graphPositions) || !object(value.modelNames) || !Number.isInteger(value.seed)) throw new Error('Incomplete editor data')
+  const windows = Array.isArray(value.windows) ? [...value.windows].sort((a, b) => (object(a) && typeof a.z === 'number' ? a.z : 0) - (object(b) && typeof b.z === 'number' ? b.z : 0)) : []
+  const panel = 'panel' in value ? asPanel(value.panel) : asPanel(windows.at(-1))
+  const libraryIds = object(value.libraryIds) ? Object.fromEntries(Object.entries(value.libraryIds).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) : {}
+  return { graphPositions: value.graphPositions as EditorState['graphPositions'], modelNames: value.modelNames as EditorState['modelNames'], libraryIds, panel, seed: value.seed as number }
+}
 export const meters = (mm: number) => (mm / 1000).toFixed(3)
 export const toMm = (m: number) => Math.round(m * 1000)
 export const isId = (id: string) => /^[A-Za-z][A-Za-z0-9_-]*$/.test(id)

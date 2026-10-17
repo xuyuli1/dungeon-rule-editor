@@ -14,5 +14,5 @@ export function renameType(project: RuntimeProject, editor: EditorState, oldId: 
   }))
   const positions = { ...editor.graphPositions }
   if (positions[oldId]) { positions[nextId] = positions[oldId]; delete positions[oldId] }
-  return { project: next, editor: { ...editor, graphPositions: positions, windows: editor.windows.map(window => window.kind === 'type' && window.id === oldId ? { ...window, id: nextId } : window) } }
+  return { project: next, editor: { ...editor, graphPositions: positions, panel: editor.panel?.kind === 'type' && editor.panel.id === oldId ? { ...editor.panel, id: nextId } : editor.panel } }
 }

@@ -1,10 +1,13 @@
-import { parseRuntime, type EditorState, type RuntimeProject } from './model'
+import { normalizeEditor, parseRuntime, type EditorState, type RuntimeProject } from './model'
 
 const DATABASE = 'dungeon-rule-editor-v2' // Upgrade the existing database and clear its unsupported v3 draft.
 const STATE = 'draft'
 const ASSETS = 'assets'
-export type Draft = { project: RuntimeProject; editor: EditorState; files: Map<string, File> }
+// Module FBX files are stored under their module ID; unassigned library files under `library:<file name>` (":" never appears in an ID).
+const LIBRARY_PREFIX = 'library:'
+export type Draft = { project: RuntimeProject; editor: EditorState; files: Map<string, File>; library: Map<string, File> }
 let lastFiles: Map<string, File> | null = null
+let lastLibrary: Map<string, File> | null = null
 
 function request<T>(value: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => { value.onsuccess = () => resolve(value.result); value.onerror = () => reject(value.error) })
@@ -38,16 +41,19 @@ export async function loadDraft(): Promise<Draft | null> {
       done,
     ])
     if (!saved) return null
-    const files = keys.length ? new Map(keys.map((key, i) => [String(key), values[i]])) : new Map(saved.files ?? [])
+    const files = new Map<string, File>(), library = new Map<string, File>()
+    keys.forEach((key, i) => { const name = String(key); if (name.startsWith(LIBRARY_PREFIX)) library.set(name.slice(LIBRARY_PREFIX.length), values[i]); else files.set(name, values[i]) })
+    if (!keys.length) for (const [id, file] of saved.files ?? []) files.set(id, file)
     lastFiles = keys.length ? files : null // The next save migrates an earlier local draft's embedded files.
-    return { project: parseRuntime(saved.project), editor: saved.editor!, files }
+    lastLibrary = keys.length ? library : null
+    return { project: parseRuntime(saved.project), editor: normalizeEditor(saved.editor), files, library }
   } finally { db.close() }
 }
 
 export async function saveDraft(draft: Draft): Promise<void> {
   const db = await database()
   try {
-    const changedFiles = draft.files !== lastFiles
+    const changedFiles = draft.files !== lastFiles || draft.library !== lastLibrary
     const tx = db.transaction([STATE, ASSETS], 'readwrite')
     const done = complete(tx)
     tx.objectStore(STATE).put({ project: draft.project, editor: draft.editor }, 'current')
@@ -55,9 +61,10 @@ export async function saveDraft(draft: Draft): Promise<void> {
       const store = tx.objectStore(ASSETS)
       store.clear()
       for (const [id, file] of draft.files) store.put(file, id)
+      for (const [name, file] of draft.library) store.put(file, LIBRARY_PREFIX + name)
     }
     await done
-    if (changedFiles) lastFiles = draft.files
+    if (changedFiles) { lastFiles = draft.files; lastLibrary = draft.library }
   } finally { db.close() }
 }
 
@@ -69,6 +76,6 @@ export async function clearDraft(): Promise<void> {
     tx.objectStore(STATE).delete('current')
     tx.objectStore(ASSETS).clear()
     await done
-    lastFiles = null
+    lastFiles = null; lastLibrary = null
   } finally { db.close() }
 }

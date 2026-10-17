@@ -26,7 +26,7 @@ body { background: #06151d; }
   background: radial-gradient(ellipse at 52% 45%, #10232b 0%, #091922 56%, #05121a 100%);
 }
 .app-shell::before { content: ""; position: fixed; inset: 0; pointer-events: none; opacity: .24; background: repeating-linear-gradient(0deg, transparent 0 3px, #89a7ad08 4px), linear-gradient(100deg, transparent 48%, #7fa0a708 50%, transparent 52%); }
-h1, h2, h3 { font-family: var(--display); color: var(--ink); text-transform: uppercase; letter-spacing: .065em; }
+h1, h2, h3 { font-family: var(--display); color: var(--ink); letter-spacing: .065em; }
 h1 { font-size: clamp(52px, 6vw, 88px); line-height: .88; font-weight: 700; margin: 0 0 12px; }
 h2 { font-size: 24px; line-height: 1; margin-bottom: 18px; }
 h3 { font-size: 17px; }
@@ -64,7 +64,7 @@ input[type=color] { background: #0b1a22; }
 .nav-closed .nav-toggle-label { display: none; }
 .nav-stripes { height: 102px; width: 24px; margin: 8px 0 0 2px; background: repeating-linear-gradient(132deg, #e5ece9 0 7px, transparent 7px 16px); clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
 .tabs { display: flex; flex-direction: column; gap: 2px; width: 248px; margin-left: 30px; margin-top: -99px; }
-.tabs button { display: flex; gap: 14px; width: 100%; padding: 7px 11px; color: #c7d0d1; border: 1px solid #2c3b42; border-radius: 0; background: #32434b; text-align: left; text-transform: uppercase; font: 600 16px/1 var(--display); letter-spacing: .045em; }
+.tabs button { display: flex; gap: 14px; width: 100%; padding: 7px 11px; color: #c7d0d1; border: 1px solid #2c3b42; border-radius: 0; background: #32434b; text-align: left; font: 600 16px/1 var(--display); letter-spacing: .045em; }
 .tabs button:hover:not(:disabled) { background: #708087; border-color: #95a4a8; color: #fff; }
 .tabs button.active, .tabs button.active:hover:not(:disabled) { background: #e9efed; border-color: #e9efed; color: #081820; }
 .step-number { color: inherit; font: 11px var(--mono); opacity: .7; }
