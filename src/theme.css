@@ -144,3 +144,9 @@ input, select { font-size: var(--fs-sm); }
 .inspector--in { border-color: var(--focus); }
 @keyframes inspector-swap-in { from { opacity: .2; transform: translateX(10px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .inspector-head, .inspector-body { transition: none; } .inspector--in .inspector-head, .inspector--in .inspector-body { animation: none; } }
+
+/* Port position group: unsaved X/Y/Z edits are outlined until Enter or leaving the group applies them together. */
+.xyz-input.editing label { border-color: #d9b56a; }
+.xyz-pending { color: #f5cf90; font-style: normal; font-weight: 400; }
+.port-duplicate { flex: none; padding: 3px 8px; font-size: var(--fs-xs); color: #cfe0e0; }
+.port-popover-head .port-duplicate { padding: 0 4px; font-size: 11px; }

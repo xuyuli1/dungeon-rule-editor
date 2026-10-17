@@ -51,37 +51,43 @@ function PortFields({ port, module, project, onChange }: { port: Port; module: M
   const [y, setY] = useState(meters(port.y))
   const [z, setZ] = useState(meters(port.z))
   const [error, setError] = useState('')
-  const cancelCommit = useRef(false)
-  const reset = () => { setId(port.id); setX(meters(port.x)); setY(meters(port.y)); setZ(meters(port.z)) }
-  useEffect(reset, [port.id, port.x, port.y, port.z])
+  const cancelId = useRef(false)
+  const xyz = useRef<HTMLDivElement>(null)
+  const resetId = () => setId(port.id)
+  const resetPosition = () => { setX(meters(port.x)); setY(meters(port.y)); setZ(meters(port.z)) }
+  useEffect(resetId, [port.id])
+  useEffect(resetPosition, [port.x, port.y, port.z])
   const commitId = () => {
     const nextId = id.trim()
-    if (nextId === port.id) { setId(port.id); return }
-    if (!isId(nextId) || module.ports.some(p => p.id === nextId && p !== port)) { setError('Enter a unique port ID.'); reset(); return }
+    if (nextId === port.id) { resetId(); return }
+    if (!isId(nextId) || module.ports.some(p => p.id === nextId && p !== port)) { setError('Enter a unique port ID.'); resetId(); return }
     setError(''); onChange({ ...port, id: nextId })
   }
+  // X, Y and Z are one group: they are checked and saved together on Enter or when focus leaves the group.
+  const positionDirty = x !== meters(port.x) || y !== meters(port.y) || z !== meters(port.z)
   const commitPosition = () => {
-    if (![x, y, z].every(value => /^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim()))) { setError('Enter valid X, Y and Z coordinates.'); reset(); return }
+    if (!positionDirty) return
+    if (![x, y, z].every(value => /^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim()))) { setError('Enter valid X, Y and Z coordinates.'); resetPosition(); return }
     const placement = portAtBoundary(module.bounds, toMm(Number(x)), toMm(Number(y)), toMm(Number(z)), project.settings.doorWidth, project.settings.doorHeight)
-    if (!placement) { setError('The full connector rectangle must fit on a vertical side face.'); reset(); return }
+    if (!placement) { setError('The full connector rectangle must fit on a vertical side face.'); resetPosition(); return }
     setError('')
-    if (placement.edge === port.edge && placement.x === port.x && placement.y === port.y && placement.z === port.z) reset()
+    if (placement.edge === port.edge && placement.x === port.x && placement.y === port.y && placement.z === port.z) resetPosition()
     else onChange({ ...port, ...placement })
   }
-  const edit = (commit: () => void) => ({
-    onBlur: () => { if (cancelCommit.current) { cancelCommit.current = false; reset() } else commit() },
-    onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { e.stopPropagation(); cancelCommit.current = true; e.currentTarget.blur() } },
-  })
-  const axis = (label: string, value: string, set: (value: string) => void) => <label><span>{label}</span><input inputMode="decimal" aria-label={`Local ${label} (m)`} value={value} onChange={e => { set(e.target.value); setError('') }} {...edit(commitPosition)} /></label>
+  const positionKeys = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') commitPosition()
+    if (e.key === 'Escape') { e.stopPropagation(); resetPosition(); setError('') }
+  }
+  const axis = (label: string, value: string, set: (value: string) => void) => <label><span>{label}</span><input inputMode="decimal" aria-label={`Local ${label} (m)`} value={value} onChange={e => { set(e.target.value); setError('') }} onKeyDown={positionKeys} /></label>
   return <>
-    <Field label="Port ID"><input value={id} onChange={e => { setId(e.target.value); setError('') }} {...edit(commitId)} /></Field>
-    <div className="field"><span>Local position (m)</span><div className="xyz-input">{axis('X', x, setX)}{axis('Y', y, setY)}{axis('Z', z, setZ)}</div></div>
+    <Field label="Port ID"><input value={id} onChange={e => { setId(e.target.value); setError('') }} onBlur={() => { if (cancelId.current) { cancelId.current = false; resetId() } else commitId() }} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { e.stopPropagation(); cancelId.current = true; e.currentTarget.blur() } }} /></Field>
+    <div className="field"><span>Local position (m){positionDirty && <em className="xyz-pending"> · press Enter to apply</em>}</span><div ref={xyz} className={`xyz-input ${positionDirty ? 'editing' : ''}`} onBlur={e => { if (!xyz.current?.contains(e.relatedTarget as Node | null)) commitPosition() }}>{axis('X', x, setX)}{axis('Y', y, setY)}{axis('Z', z, setZ)}</div></div>
     {error && <small className="field-error" role="alert">{error}</small>}
     <div className="field"><span>Allowed target types</span><details className="type-multiselect"><summary>{portTargets(port)}</summary><div><button className="quiet" onClick={() => onChange({ ...port, allowedTypeIds: null })}>Any related type</button>{project.types.map(t => <label key={t.id}><input type="checkbox" checked={port.allowedTypeIds?.includes(t.id) ?? false} onChange={e => { const ids = e.target.checked ? [...(port.allowedTypeIds ?? []), t.id] : (port.allowedTypeIds ?? []).filter(id => id !== t.id); onChange({ ...port, allowedTypeIds: ids }) }} />{t.id}</label>)}</div></details></div><p className="hint">Both connected ports must accept the other module's type.</p>
   </>
 }
-function PortEditor({ port, module, project, onChange, onDelete }: { port: Port; module: Module; project: RuntimeProject; onChange: (next: Port) => void; onDelete: () => void }) {
-  return <details className="port-editor"><summary className="port-editor-head"><strong>{port.id}</strong><span>{edgeNames[port.edge]}</span><span className="port-editor-summary">({port.x / 1000}, {port.y / 1000}, {port.z / 1000}) m · {portTargets(port)}</span><button className="icon danger" aria-label={`Remove port ${port.id}`} onClick={e => { e.preventDefault(); onDelete() }}>×</button></summary><PortFields port={port} module={module} project={project} onChange={onChange} /></details>
+function PortEditor({ port, module, project, onChange, onDuplicate, onDelete }: { port: Port; module: Module; project: RuntimeProject; onChange: (next: Port) => void; onDuplicate: () => void; onDelete: () => void }) {
+  return <details className="port-editor"><summary className="port-editor-head"><strong>{port.id}</strong><span>{edgeNames[port.edge]}</span><span className="port-editor-summary">({port.x / 1000}, {port.y / 1000}, {port.z / 1000}) m · {portTargets(port)}</span><button className="quiet port-duplicate" aria-label={`Duplicate port ${port.id}`} onClick={e => { e.preventDefault(); onDuplicate() }}>Duplicate</button><button className="icon danger" aria-label={`Remove port ${port.id}`} onClick={e => { e.preventDefault(); onDelete() }}>×</button></summary><PortFields port={port} module={module} project={project} onChange={onChange} /></details>
 }
 function TypeIdInput({ type, project, onCommit }: { type: ModuleType; project: RuntimeProject; onCommit: (nextId: string) => void }) {
   const [draft, setDraft] = useState(type.id)
@@ -474,14 +480,24 @@ export default function App() {
       const m = panelModule
       const updatePort = (oldId: string, next: Port) => updateModule(m.id, draft => { const index = draft.ports.findIndex(p => p.id === oldId); if (index >= 0) draft.ports[index] = next })
       const removePort = (id: string) => updateModule(m.id, draft => { draft.ports = draft.ports.filter(p => p.id !== id) })
+      // Copies a port's side, height and target types, one connector width along the same face where it fits.
+      const duplicatePort = (id: string) => {
+        const source = m.ports.find(p => p.id === id)
+        if (!source) return undefined
+        const nextId = uniqueId(m.ports.map(p => p.id), source.id), width = project.settings.doorWidth
+        const alongX = source.edge === 'N' || source.edge === 'S'
+        const placement = [width, -width].map(offset => portAtBoundary(m.bounds, source.x + (alongX ? offset : 0), source.y, source.z + (alongX ? 0 : offset), width, project.settings.doorHeight)).find(p => p?.edge === source.edge)
+        updateModule(m.id, draft => { draft.ports.push({ ...source, ...(placement ?? {}), id: nextId, allowedTypeIds: source.allowedTypeIds && [...source.allowedTypeIds] }) })
+        return nextId
+      }
       return <InspectorPanel key="inspector" phase={panelPhase} kind="Module" title={m.id} onClose={closePanel}>
         <p className="hint">{editor.modelNames[m.id] ? `Model file: ${editor.modelNames[m.id]}` : 'No FBX loaded. Bounds remain editable.'}</p><div className="section-head"><h3>Model & footprint</h3><button className="danger-text" onClick={() => removeModule(m.id)}>Delete module</button></div>
         <div className="fbx-drop" onDragOver={e => e.preventDefault()} onDrop={e => dropFbx(e, { kind: 'replace', moduleId: m.id })}><strong>Replace model</strong><span className="hint">Drop an FBX or a Models row here. The module is renamed to the new model's ID and its ports are kept.</span><div className="fbx-drop-actions"><button onClick={() => chooseFbx({ kind: 'replace', moduleId: m.id })}>Choose FBX</button>{library.size > 0 && <select aria-label="Replace from Models" value="" onChange={e => { if (e.target.value) void assignFromLibrary(e.target.value, { kind: 'replace', moduleId: m.id }) }}><option value="">From Models…</option>{[...library.keys()].map(name => <option key={name} value={name}>{libraryId(name)}</option>)}</select>}</div></div>
         <Field label="Type"><select value={m.typeId} onChange={e => updateModule(m.id, draft => { draft.typeId = e.target.value })}>{project.types.map(t => <option key={t.id} value={t.id}>{t.id}</option>)}</select></Field>
         <div className="row three"><div className="metric"><span>Width X</span><strong>{meters(m.bounds.maxX - m.bounds.minX)} m</strong></div><div className="metric"><span>Height Y</span><strong>{meters(m.bounds.maxY - m.bounds.minY)} m</strong></div><div className="metric"><span>Depth Z</span><strong>{meters(m.bounds.maxZ - m.bounds.minZ)} m</strong></div></div>
-        <section className="subsection"><h3>3D bounds & connectors</h3><ThreeCanvas module={m} doorWidth={project.settings.doorWidth} doorHeight={project.settings.doorHeight} onPortChange={updatePort} onAddPort={point => updateModule(m.id, draft => { draft.ports.push({ id: uniqueId(draft.ports.map(p => p.id), 'port'), ...point, allowedTypeIds: null }) })} onDeletePort={removePort} onError={setNotice} portPanel={(portId, select) => { const port = m.ports.find(p => p.id === portId); return port && <PortFields key={port.id} port={port} module={m} project={project} onChange={next => { updatePort(port.id, next); if (next.id !== port.id) select(next.id) }} /> }} /></section>
+        <section className="subsection"><h3>3D bounds & connectors</h3><ThreeCanvas module={m} doorWidth={project.settings.doorWidth} doorHeight={project.settings.doorHeight} onPortChange={updatePort} onAddPort={point => updateModule(m.id, draft => { draft.ports.push({ id: uniqueId(draft.ports.map(p => p.id), 'port'), ...point, allowedTypeIds: null }) })} onDeletePort={removePort} onDuplicatePort={duplicatePort} onError={setNotice} portPanel={(portId, select) => { const port = m.ports.find(p => p.id === portId); return port && <PortFields key={port.id} port={port} module={m} project={project} onChange={next => { updatePort(port.id, next); if (next.id !== port.id) select(next.id) }} /> }} /></section>
         <details className="subsection advanced-bounds"><summary>Advanced · adjust bounds relative to model origin</summary><div className="row two">{(['minX', 'maxX', 'minY', 'maxY', 'minZ', 'maxZ'] as const).map(key => <NumberField key={`${m.id}-${key}`} label={key} value={m.bounds[key] / 1000} step={0.001} suffix="m" validate={n => { const mm = toMm(n); const axis = key.slice(-1) as 'X' | 'Y' | 'Z'; const other = key.startsWith('min') ? m.bounds[`max${axis}`] : m.bounds[`min${axis}`]; return key.startsWith('min') ? mm >= other ? 'Minimum must be below maximum' : undefined : mm <= other ? 'Maximum must exceed minimum' : undefined }} onChange={n => setBounds(m.id, key, n)} />)}</div></details>
-        <section className="subsection"><h3>Ports</h3>{m.ports.map(port => <PortEditor key={port.id} port={port} module={m} project={project} onChange={next => updatePort(port.id, next)} onDelete={() => removePort(port.id)} />)}{!m.ports.length && <p className="empty">Add a port on the canvas above.</p>}</section>
+        <section className="subsection"><h3>Ports</h3>{m.ports.map(port => <PortEditor key={port.id} port={port} module={m} project={project} onChange={next => updatePort(port.id, next)} onDuplicate={() => duplicatePort(port.id)} onDelete={() => removePort(port.id)} />)}{!m.ports.length && <p className="empty">Add a port on the canvas above.</p>}</section>
       </InspectorPanel>
     })()}
 

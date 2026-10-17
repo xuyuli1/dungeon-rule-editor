@@ -16,6 +16,7 @@ type Props = {
   onPortChange?: (id: string, next: Port) => void
   onAddPort?: (point: PortPoint) => void
   onDeletePort?: (id: string) => void
+  onDuplicatePort?: (id: string) => string | undefined
   onError?: (message: string) => void
   portPanel?: (portId: string, select: (id: string) => void) => ReactNode
 }
@@ -325,7 +326,7 @@ export function ThreeCanvas(props: Props) {
       <div className="three-canvas" ref={root} tabIndex={0} aria-label={props.module ? '3D module and connector editor' : '3D map preview'} />
       {shownPlacement && props.result && <div className="three-selection">{placementLabel(shownPlacement)}</div>}
       {selectedPort && props.module && props.portPanel && <div className="port-popover" ref={popover} role="dialog" aria-label={`Port ${selectedPort}`}>
-        <div className="port-popover-head"><strong>{selectedPort}</strong>{props.onDeletePort && <button className="danger-text" onClick={() => { props.onDeletePort?.(selectedPort); setSelectedPort('') }}>Delete</button>}<button className="icon" aria-label="Close port properties" onClick={() => setSelectedPort('')}>×</button></div>
+        <div className="port-popover-head"><strong>{selectedPort}</strong>{props.onDuplicatePort && <button className="quiet port-duplicate" onClick={() => { const copy = props.onDuplicatePort?.(selectedPort); if (copy) setSelectedPort(copy) }}>Duplicate</button>}{props.onDeletePort && <button className="danger-text" onClick={() => { props.onDeletePort?.(selectedPort); setSelectedPort('') }}>Delete</button>}<button className="icon" aria-label="Close port properties" onClick={() => setSelectedPort('')}>×</button></div>
         {props.portPanel(selectedPort, setSelectedPort)}
       </div>}
     </div>
