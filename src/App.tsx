@@ -69,10 +69,8 @@ function PortFields({ port, module, project, onChange }: { port: Port; module: M
   const commitPosition = () => {
     if (!positionDirty) return
     if (![x, y, z].every(value => /^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim()))) { setError('Enter valid X, Y and Z coordinates.'); resetPosition(); return }
-    const door = doorTypeFor(project, port)
-    if (!door) { setError('Choose a door type first.'); resetPosition(); return }
-    const placement = portAtBoundary(module.bounds, toMm(Number(x)), toMm(Number(y)), toMm(Number(z)), door.width, door.height)
-    if (!placement) { setError('The full door rectangle must fit on a vertical side face.'); resetPosition(); return }
+    const placement = portAtBoundary(module.bounds, toMm(Number(x)), toMm(Number(y)), toMm(Number(z)))
+    if (!placement) { setError('The door centre must be on a vertical side face.'); resetPosition(); return }
     setError('')
     if (placement.edge === port.edge && placement.x === port.x && placement.y === port.y && placement.z === port.z) resetPosition()
     else onChange({ ...port, ...placement })
@@ -86,11 +84,7 @@ function PortFields({ port, module, project, onChange }: { port: Port; module: M
     <Field label="Port ID"><input value={id} onChange={e => { setId(e.target.value); setError('') }} onBlur={() => { if (cancelId.current) { cancelId.current = false; resetId() } else commitId() }} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { e.stopPropagation(); cancelId.current = true; e.currentTarget.blur() } }} /></Field>
     <div className="field"><span>Local position (m){positionDirty && <em className="xyz-pending"> · press Enter to apply</em>}</span><div ref={xyz} className={`xyz-input ${positionDirty ? 'editing' : ''}`} onBlur={e => { if (!xyz.current?.contains(e.relatedTarget as Node | null)) commitPosition() }}>{axis('X', x, setX)}{axis('Y', y, setY)}{axis('Z', z, setZ)}</div></div>
     <Field label="Door type"><select value={port.doorTypeId} aria-invalid={!doorTypeFor(project, port)} onChange={e => {
-      const door = project.doorTypes.find(d => d.id === e.target.value)
-      if (!door) return
-      const placement = portAtBoundary(module.bounds, port.x, port.y, port.z, door.width, door.height)
-      if (!placement) { setError(`A ${door.id} opening (${meters(door.width)} × ${meters(door.height)} m) does not fit on this face here.`); return }
-      setError(''); onChange({ ...port, ...placement, doorTypeId: door.id })
+      if (project.doorTypes.some(d => d.id === e.target.value)) { setError(''); onChange({ ...port, doorTypeId: e.target.value }) }
     }}>{!doorTypeFor(project, port) && <option value={port.doorTypeId}>Missing: {port.doorTypeId || 'none'}</option>}{project.doorTypes.map(d => <option key={d.id} value={d.id}>{d.id} · {meters(d.width)} × {meters(d.height)} m</option>)}</select></Field>
     {error && <small className="field-error" role="alert">{error}</small>}
     <div className="field"><span>Allowed target types</span><details className="type-multiselect"><summary>{portTargets(port)}</summary><div><button className="quiet" onClick={() => onChange({ ...port, allowedTypeIds: null })}>Any related type</button>{project.types.map(t => <label key={t.id}><input type="checkbox" checked={port.allowedTypeIds?.includes(t.id) ?? false} onChange={e => { const ids = e.target.checked ? [...(port.allowedTypeIds ?? []), t.id] : (port.allowedTypeIds ?? []).filter(id => id !== t.id); onChange({ ...port, allowedTypeIds: ids }) }} />{t.id}</label>)}</div></details></div><p className="hint">Both connected ports must accept the other module's type.</p>
@@ -385,12 +379,12 @@ export default function App() {
   const setBounds = (id: string, key: keyof Bounds, value: number) => {
     updateModule(id, m => {
       m.bounds[key] = toMm(value)
+      // Keep each port's centre on its face; the door may overhang.
       const b = m.bounds
       for (const p of m.ports) {
-        const door = doorTypeFor(project, p), half = (door?.width ?? 0) / 2, halfHeight = (door?.height ?? 0) / 2
-        if (p.edge === 'N' || p.edge === 'S') { p.z = p.edge === 'N' ? b.maxZ : b.minZ; p.x = Math.round(Math.max(b.minX + half, Math.min(b.maxX - half, p.x))) }
-        else { p.x = p.edge === 'E' ? b.maxX : b.minX; p.z = Math.round(Math.max(b.minZ + half, Math.min(b.maxZ - half, p.z))) }
-        p.y = Math.round(Math.max(b.minY + halfHeight, Math.min(b.maxY - halfHeight, p.y)))
+        if (p.edge === 'N' || p.edge === 'S') { p.z = p.edge === 'N' ? b.maxZ : b.minZ; p.x = Math.round(Math.max(b.minX, Math.min(b.maxX, p.x))) }
+        else { p.x = p.edge === 'E' ? b.maxX : b.minX; p.z = Math.round(Math.max(b.minZ, Math.min(b.maxZ, p.z))) }
+        p.y = Math.round(Math.max(b.minY, Math.min(b.maxY, p.y)))
       }
     })
   }
@@ -498,13 +492,13 @@ export default function App() {
       const m = panelModule
       const updatePort = (oldId: string, next: Port) => updateModule(m.id, draft => { const index = draft.ports.findIndex(p => p.id === oldId); if (index >= 0) draft.ports[index] = next })
       const removePort = (id: string) => updateModule(m.id, draft => { draft.ports = draft.ports.filter(p => p.id !== id) })
-      // Copies a port's side, height, door type and target types, one door width along the same face where it fits.
+      // Copies a port's side, height, door type and target types, one door width along the same face when the centre stays on it.
       const duplicatePort = (id: string) => {
         const source = m.ports.find(p => p.id === id), door = source && doorTypeFor(project, source)
         if (!source || !door) return undefined
         const nextId = uniqueId(m.ports.map(p => p.id), source.id), width = door.width
         const alongX = source.edge === 'N' || source.edge === 'S'
-        const placement = [width, -width].map(offset => portAtBoundary(m.bounds, source.x + (alongX ? offset : 0), source.y, source.z + (alongX ? 0 : offset), width, door.height)).find(p => p?.edge === source.edge)
+        const placement = [width, -width].map(offset => portAtBoundary(m.bounds, source.x + (alongX ? offset : 0), source.y, source.z + (alongX ? 0 : offset))).find(p => p?.edge === source.edge)
         updateModule(m.id, draft => { draft.ports.push({ ...source, ...(placement ?? {}), id: nextId, allowedTypeIds: source.allowedTypeIds && [...source.allowedTypeIds] }) })
         return nextId
       }

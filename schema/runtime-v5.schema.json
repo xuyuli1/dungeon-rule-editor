@@ -124,6 +124,7 @@
     },
     "port": {
       "type": "object",
+      "description": "(x, y, z) is the opening centre in model millimetres; it lies on the side face named by edge, and the door-type rectangle may overhang that face",
       "additionalProperties": false,
       "required": [
         "id",

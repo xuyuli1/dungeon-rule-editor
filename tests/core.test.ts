@@ -26,7 +26,7 @@ describe('v5 map rules', () => {
     expect(fbxMetersPerUnit(undefined)).toBe(.01)
     const before = { minX: -2000, maxX: 2000, minY: 0, maxY: 4000, minZ: -2000, maxZ: 2000 }
     const after = { minX: -4000, maxX: 4000, minY: 1000, maxY: 9000, minZ: -4000, maxZ: 4000 }
-    expect(remapPorts([{ id: 'a', edge: 'N', doorTypeId: 'd', x: 1000, y: 1000, z: 2000, allowedTypeIds: null }], before, after, 1000, 1000))
+    expect(remapPorts([{ id: 'a', edge: 'N', doorTypeId: 'd', x: 1000, y: 1000, z: 2000, allowedTypeIds: null }], before, after))
       .toEqual([{ id: 'a', edge: 'N', doorTypeId: 'd', x: 2000, y: 3000, z: 4000, allowedTypeIds: null }])
   })
   it('uses largest remainders and keeps required minima inside targets', () => {
@@ -98,15 +98,21 @@ describe('v5 map rules', () => {
     expect(doors.every(door => door.width === 1000 && door.height === 1000)).toBe(true)
     expect(doors.every(door => Number.isInteger(door.y))).toBe(true)
   })
-  it('requires the full connector rectangle to fit a vertical side face', () => {
+  it('requires the door centre on a side face but lets the opening overhang', () => {
     const bounds = { minX: -4000, maxX: 4000, minY: 0, maxY: 3000, minZ: -4000, maxZ: 4000 }
-    expect(portAtBoundary(bounds, 0, 500, 4000, 1000, 1000)?.edge).toBe('N')
-    expect(portAtBoundary(bounds, 0, 2500, 4000, 1000, 1000)?.edge).toBe('N')
-    expect(portAtBoundary(bounds, 0, 2600, 4000, 1000, 1000)).toBeNull()
-    expect(portAtBoundary(bounds, 3800, 1500, 4000, 1000, 1000)).toBeNull()
-    expect(portAtBoundary(bounds, 0, 1500, 3900, 1000, 1000)).toBeNull()
-    expect(nearestValidPort(bounds, 3900, 2900, 0, 1000, 1000)).toEqual({ edge: 'E', x: 4000, y: 2500, z: 0 })
-    expect(portAtBoundary({ ...bounds, maxY: 100 }, 0, 50, 4000, 1000, 1000)).toBeNull()
+    expect(portAtBoundary(bounds, 0, 100, 4000)?.edge).toBe('N')
+    expect(portAtBoundary(bounds, 3900, 2900, 4000)).toEqual({ edge: 'N', x: 3900, y: 2900, z: 4000 })
+    expect(portAtBoundary(bounds, 0, 3100, 4000)).toBeNull()
+    expect(portAtBoundary(bounds, 4100, 1500, 4000)).toBeNull()
+    expect(portAtBoundary(bounds, 0, 1500, 3900)).toBeNull()
+    expect(portAtBoundary(bounds, 0, 1500, 3995, 10)).toEqual({ edge: 'N', x: 0, y: 1500, z: 4000 })
+    expect(nearestValidPort(bounds, 3900, 3500, 0)).toEqual({ edge: 'E', x: 4000, y: 3000, z: 0 })
+    const project = exampleProject()
+    project.doorTypes[0] = { ...project.doorTypes[0], width: 10000, height: 5000 }
+    project.modules[0].ports[0].x = 4000
+    expect(validateProject(project)).toEqual([])
+    project.modules[0].ports[0].x = 4100
+    expect(validateProject(project).some(error => error.includes('centre off its side face'))).toBe(true)
   })
   it('checks both connector type permissions and directed connections', () => {
     const project = exampleProject()
@@ -156,7 +162,10 @@ describe('v5 map rules', () => {
     expect(portsFromDoorMarkers(room, [marker('ns:Door01', onFace)], []).errors[0]).toContain('not a valid port ID')
     expect(portsFromDoorMarkers(room, [marker('Door', onFace), marker('Door', onFace)], []).errors[0]).toContain('Two door meshes')
     expect(portsFromDoorMarkers(room, [marker('Door', { ...onFace, minZ: 0, maxZ: 0 })], []).errors[0]).toContain('not on a side face')
-    expect(portsFromDoorMarkers(room, [marker('Door', { ...onFace, minX: 2500, maxX: 3500 })], []).errors[0]).toContain('does not fit')
+    expect(portsFromDoorMarkers(room, [marker('Door', { ...onFace, minX: 3500, maxX: 4500 })], []).errors[0]).toContain('not on a side face')
+    const overhang = portsFromDoorMarkers(room, [marker('Wide_Door', { minX: -4000, maxX: 4000, minY: 0, maxY: 5000, minZ: 3000, maxZ: 3000 })], [])
+    expect(overhang.errors).toEqual([])
+    expect(overhang.ports[0]).toMatchObject({ edge: 'N', doorTypeId: 'Door_800x500', x: 0, y: 2500, z: 3000 })
     const mixed = portsFromDoorMarkers(room, [marker('Good', onFace), marker('9bad', onFace)], [])
     expect(mixed.ports).toEqual([])
   })

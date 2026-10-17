@@ -118,12 +118,12 @@ export function validateProject(project: RuntimeProject): string[] {
       if (port.allowedTypeIds !== null && (!Array.isArray(port.allowedTypeIds) || new Set(port.allowedTypeIds).size !== port.allowedTypeIds.length || port.allowedTypeIds.some(id => !typeIds.has(id)))) errors.push(`Port ${port.id} on module ${module.id} has invalid target types`)
       const door = doorTypeFor(project, port)
       if (!door) { errors.push(`Port ${port.id} on module ${module.id} needs a valid door type`); continue }
-      const half = door.width / 2, doorHeight = door.height
-      const valid = port.edge === 'N' ? port.z === b.maxZ && port.x >= b.minX + half && port.x <= b.maxX - half
-        : port.edge === 'S' ? port.z === b.minZ && port.x >= b.minX + half && port.x <= b.maxX - half
-          : port.edge === 'E' ? port.x === b.maxX && port.z >= b.minZ + half && port.z <= b.maxZ - half
-            : port.x === b.minX && port.z >= b.minZ + half && port.z <= b.maxZ - half
-      if (!valid || port.y < b.minY + doorHeight / 2 || port.y > b.maxY - doorHeight / 2) errors.push(`Port ${port.id} on module ${module.id} is outside its side face`)
+      // The centre must be on its side face; the door rectangle may overhang the face's edges, top or bottom.
+      const valid = port.edge === 'N' ? port.z === b.maxZ && port.x >= b.minX && port.x <= b.maxX
+        : port.edge === 'S' ? port.z === b.minZ && port.x >= b.minX && port.x <= b.maxX
+          : port.edge === 'E' ? port.x === b.maxX && port.z >= b.minZ && port.z <= b.maxZ
+            : port.x === b.minX && port.z >= b.minZ && port.z <= b.maxZ
+      if (!valid || port.y < b.minY || port.y > b.maxY) errors.push(`Port ${port.id} on module ${module.id} has its centre off its side face`)
     }
   }
   for (const type of project.types) if ((targets[type.id] ?? 0) > 0 && !modulesByType.has(type.id)) errors.push(`Type ${type.id} has target slots but no modules`)

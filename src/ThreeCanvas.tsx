@@ -191,8 +191,8 @@ export function ThreeCanvas(props: Props) {
       if (Math.abs(normal.y) > .5) return null
       const x = Math.round(hit.point.x * 1000), y = Math.round(hit.point.y * 1000), z = Math.round(hit.point.z * 1000)
       return nearest
-        ? nearestValidPort(module.bounds, x, y, z, door.width, door.height)
-        : portAtBoundary(module.bounds, x, y, z, door.width, door.height, 3)
+        ? nearestValidPort(module.bounds, x, y, z)
+        : portAtBoundary(module.bounds, x, y, z, 3)
     }
     const showGhost = (point: PortPoint | null) => {
       if (ghost.current) { state.scene.remove(ghost.current); disposeTree(ghost.current); ghost.current = null }
