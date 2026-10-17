@@ -17,13 +17,19 @@ npm run dev
 
 ## Workflow
 
-1. Set the number of modules after the unique start, the start type, and the project-wide connector width and height. Both connector dimensions default to 1 m.
+1. Set the number of modules after the unique start and the start type. **Door types** list the door opening sizes in the project; they are usually created for you from door meshes when you import FBX files, and you can rename them, change their size, or add one by hand. Each size is one door type, and ports only connect to ports of the same door type.
 2. Right-click the type graph background to create or arrange types. Right-click a type to edit, connect, or delete it. Relations are directed; the number on each arrow is its relative generation weight. Type, module and new-type details all open in one docked panel on the right; opening another replaces it, and **Esc** or × closes it.
-3. Add models. Either choose or drop an FBX on a type's **+ Add module** slot, or use **Models** to upload a whole folder (or several FBX files) and assign them later: each model waits there with an editable module ID (defaulting to its file name), then you pick a type and press **Assign** or drag the row onto a type's slot. The editor computes the model's three-dimensional bounds relative to its origin. Use the collapsed Advanced bounds section only when the occupancy box needs correction.
+3. Add models. Either choose or drop an FBX on a type's **+ Add module** slot, or use **Models** to upload a whole folder (or several FBX files): press **Auto-assign all**, or pick a type and press **Assign**, or drag a row onto a type's slot. Models are recognised from their names, which are never changed:
+   - the file name is the module ID (`CorridorConnection_Ten_Small.fbx` → `CorridorConnection_Ten_Small`);
+   - the text before the first `_` is the type (`CorridorConnection`), created if it doesn't exist;
+   - the mesh named like the file is the module's body and defines its occupancy box;
+   - every mesh with `Door` in its name is a port: its full mesh name is the port ID, its centre must lie on a side face of the box (that face is the port's side, i.e. the door's outward Z in Unity), and its width and height pick or create the door type.
+
+   A name that isn't a valid ID (start with a letter; letters, numbers, `_` or `-` only), two door meshes with the same name, or a door that isn't on a side face is reported, and the file can't be used until it is fixed in Maya or on disk. Replacing a module's model rebuilds its ports from the new file. Use the collapsed Advanced bounds section only when the occupancy box needs correction.
 4. In the module panel, place and drag rectangular ports on the sides of the 3D box, or click a port to edit its ID, local X/Y/Z position and target types. Fields save on Enter or when you leave them. A connector must fit completely within one vertical side face.
 5. Generate a map from a visible seed. Every 3D view supports left-drag orbit, right or middle drag pan and wheel zoom, and stops as soon as you release the mouse. Hovering highlights a module or port, double-click focuses it, **F** focuses the hovered item and **Fit** shows everything. **Camera** sets rotate, pan and zoom speed for all 3D views; the speeds are remembered in this browser. The 3D preview uses colored boxes rather than rendering FBX. Connected connectors have an empty solid outline; unused connectors have a solid hatched outline and do not cause warnings.
 
-Projects autosave locally in IndexedDB, including unassigned models in Models. The file menu can save and reopen ZIP projects with original FBX files (assigned and unassigned), or import and export runtime JSON without models and editor layout. Runtime JSON and ZIP use v4; v3 and older files are not migrated. Their schemas and generation behavior are documented in [`schema/runtime-v4.schema.json`](schema/runtime-v4.schema.json) and [`ALGORITHM.md`](ALGORITHM.md).
+Projects autosave locally in IndexedDB, including unassigned models in Models. The file menu can save and reopen ZIP projects with original FBX files (assigned and unassigned), or import and export runtime JSON without models and editor layout. Runtime JSON and ZIP use v5; v4 and older files are not migrated. Their schemas and generation behavior are documented in [`schema/runtime-v5.schema.json`](schema/runtime-v5.schema.json) and [`ALGORITHM.md`](ALGORITHM.md).
 
 ## Unity agreement
 

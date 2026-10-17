@@ -4,15 +4,15 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { nearestValidPort, portAtBoundary } from './geometry'
 import { previewDoors, rotatedBounds, type PreviewResult } from './generator'
 import { CAMERA_SPEED_MAX, CAMERA_SPEED_MIN, defaultCameraSpeeds, getCameraSpeeds, setCameraSpeeds, subscribeCameraSpeeds, useCameraSpeeds, type CameraSpeeds } from './cameraSettings'
-import type { Bounds, Module, Port, RuntimeProject } from './model'
+import type { Bounds, DoorType, Module, Port, RuntimeProject } from './model'
 
 type PortPoint = Pick<Port, 'edge' | 'x' | 'y' | 'z'>
 type Props = {
   module?: Module
   project?: RuntimeProject
   result?: PreviewResult
-  doorWidth: number
-  doorHeight: number
+  doorTypes: DoorType[]
+  newPortDoor?: DoorType // Door type used by "+ Add port"; adding is disabled without one.
   onPortChange?: (id: string, next: Port) => void
   onAddPort?: (point: PortPoint) => void
   onDeletePort?: (id: string) => void
@@ -175,7 +175,14 @@ export function ThreeCanvas(props: Props) {
       const rect = renderer.domElement.getBoundingClientRect(); pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1)
       raycaster.setFromCamera(pointer, camera); return raycaster.intersectObjects(objects, true)
     }
+    // The opening size in play: the dragged port's door type, or the door type for new ports while placing.
+    const activeDoor = (): DoorType | undefined => {
+      const dragged = drag.current && current.current.module?.ports.find(port => port.id === drag.current!.id)
+      return dragged ? current.current.doorTypes.find(door => door.id === dragged.doorTypeId) : current.current.newPortDoor
+    }
     const pointOnBox = (event: PointerEvent, nearest: boolean): PortPoint | null => {
+      const door = activeDoor()
+      if (!door) return null
       const box = state.box, module = current.current.module
       if (!box || !module) return null
       const hit = cast(event, [box])[0]
@@ -184,12 +191,13 @@ export function ThreeCanvas(props: Props) {
       if (Math.abs(normal.y) > .5) return null
       const x = Math.round(hit.point.x * 1000), y = Math.round(hit.point.y * 1000), z = Math.round(hit.point.z * 1000)
       return nearest
-        ? nearestValidPort(module.bounds, x, y, z, current.current.doorWidth, current.current.doorHeight)
-        : portAtBoundary(module.bounds, x, y, z, current.current.doorWidth, current.current.doorHeight, 3)
+        ? nearestValidPort(module.bounds, x, y, z, door.width, door.height)
+        : portAtBoundary(module.bounds, x, y, z, door.width, door.height, 3)
     }
     const showGhost = (point: PortPoint | null) => {
       if (ghost.current) { state.scene.remove(ghost.current); disposeTree(ghost.current); ghost.current = null }
-      if (point) { ghost.current = frame(point, current.current.doorWidth, current.current.doorHeight, true); ghost.current.traverse(obj => { if (obj instanceof THREE.LineSegments) (obj.material as THREE.LineBasicMaterial).color.set('#91e6dc') }); state.scene.add(ghost.current) }
+      const door = activeDoor()
+      if (point && door) { ghost.current = frame(point, door.width, door.height, true); ghost.current.traverse(obj => { if (obj instanceof THREE.LineSegments) (obj.material as THREE.LineBasicMaterial).color.set('#91e6dc') }); state.scene.add(ghost.current) }
     }
     let down: { x: number; y: number } | null = null
     const onDown = (event: PointerEvent) => {
@@ -275,11 +283,11 @@ export function ThreeCanvas(props: Props) {
     const state = view.current
     if (!state) return
     disposeTree(state.content); state.content.clear(); state.picks = []; state.box = undefined; state.bounds.makeEmpty()
-    const { module, project, result, doorWidth, doorHeight } = props
+    const { module, project, result, doorTypes } = props
     if (module) {
       state.box = addBox(state.content, module.bounds, '#8ed6e5', module.id, true)
       state.picks.push(state.box); state.bounds.copy(box3(module.bounds))
-      for (const port of module.ports) { const shape = frame(port, doorWidth, doorHeight, true, port.id); state.content.add(shape); state.picks.push(shape) }
+      for (const port of module.ports) { const door = doorTypes.find(d => d.id === port.doorTypeId); const shape = frame(port, door?.width ?? 0, door?.height ?? 0, true, port.id); state.content.add(shape); state.picks.push(shape) }
       if (selectedPortRef.current && !module.ports.some(port => port.id === selectedPortRef.current)) setSelectedPort('')
       paintPorts()
     } else if (project && result) {
@@ -302,7 +310,7 @@ export function ThreeCanvas(props: Props) {
       lastFitSource.current = fitSource
       requestAnimationFrame(() => { if (view.current === state) state.fit() })
     }
-  }, [props.module?.id, props.module?.bounds, props.module?.ports, props.project, props.result, props.doorWidth, props.doorHeight])
+  }, [props.module?.id, props.module?.bounds, props.module?.ports, props.project, props.result, props.doorTypes])
 
   const placementLabel = (id: string) => {
     const placement = props.result?.placements.find(p => p.instanceId === id)
@@ -312,7 +320,7 @@ export function ThreeCanvas(props: Props) {
   const speedRows: [keyof CameraSpeeds, string][] = [['rotate', 'Rotate'], ['pan', 'Pan'], ['zoom', 'Zoom']]
   return <div className="three-canvas-shell">
     <div className="three-canvas-toolbar">
-      {props.module && <button className={placing ? 'primary' : 'quiet'} onClick={() => setPlacing(value => !value)}>{placing ? 'Cancel placement' : '+ Add port'}</button>}
+      {props.module && <button className={placing ? 'primary' : 'quiet'} disabled={!props.newPortDoor && !placing} title={props.newPortDoor ? `New ports use ${props.newPortDoor.id}` : 'Add a door type first'} onClick={() => setPlacing(value => !value)}>{placing ? 'Cancel placement' : '+ Add port'}</button>}
       <button className={cameraOpen ? 'primary' : 'quiet'} aria-expanded={cameraOpen} onClick={() => setCameraOpen(value => !value)}>Camera</button>
       <button className="quiet" title="Fit everything in view" onClick={() => view.current?.fit()}>Fit</button>
     </div>

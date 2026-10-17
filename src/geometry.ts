@@ -1,4 +1,4 @@
-import type { Bounds, Edge, Port } from './model'
+import { doorTypeName, isId, sameDoorSize, type Bounds, type DoorType, type Edge, type Port } from './model'
 
 type PortPosition = Pick<Port, 'edge' | 'x' | 'y' | 'z'>
 
@@ -33,6 +33,43 @@ export function nearestValidPort(bounds: Bounds, x: number, y: number, z: number
   }
   candidates.sort((a, b) => (a.x - x) ** 2 + (a.y - y) ** 2 + (a.z - z) ** 2 - ((b.x - x) ** 2 + (b.y - y) ** 2 + (b.z - z) ** 2))
   return candidates[0] ?? null
+}
+
+// A door marker is a mesh whose name contains "door"; `box` is its axis-aligned extent in model millimetres.
+export type DoorMarker = { name: string; box: Bounds }
+export type DoorImport = { ports: Port[]; newDoorTypes: DoorType[]; errors: string[] }
+// A marker's centre must lie within this distance of a side face; that face gives the port's side (its outward direction).
+export const DOOR_FACE_TOLERANCE = 50
+
+// Turns door markers into ports. Names are kept exactly as the port IDs; any problem is an error and no ports are returned.
+export function portsFromDoorMarkers(bounds: Bounds, markers: DoorMarker[], doorTypes: DoorType[]): DoorImport {
+  const errors: string[] = [], ports: Port[] = [], newDoorTypes: DoorType[] = [], seen = new Set<string>()
+  for (const { name, box } of markers) {
+    if (!isId(name)) { errors.push(`Door mesh "${name}" is not a valid port ID: start with a letter; use letters, numbers, _ or -`); continue }
+    if (seen.has(name)) { errors.push(`Two door meshes are named "${name}"`); continue }
+    seen.add(name)
+    const x = (box.minX + box.maxX) / 2, y = (box.minY + box.maxY) / 2, z = (box.minZ + box.maxZ) / 2
+    const faces: { edge: Edge; distance: number }[] = [
+      { edge: 'N', distance: Math.abs(z - bounds.maxZ) }, { edge: 'E', distance: Math.abs(x - bounds.maxX) },
+      { edge: 'S', distance: Math.abs(z - bounds.minZ) }, { edge: 'W', distance: Math.abs(x - bounds.minX) },
+    ]
+    const face = faces.sort((a, b) => a.distance - b.distance)[0]
+    if (face.distance > DOOR_FACE_TOLERANCE) { errors.push(`Door mesh "${name}" is not on a side face of the model`); continue }
+    const width = Math.round(face.edge === 'N' || face.edge === 'S' ? box.maxX - box.minX : box.maxZ - box.minZ), height = Math.round(box.maxY - box.minY)
+    if (width <= 0 || height <= 0) { errors.push(`Door mesh "${name}" has no width or height on its face`); continue }
+    const placement = portAtBoundary(bounds, x, y, z, width, height, DOOR_FACE_TOLERANCE)
+    if (!placement || placement.edge !== face.edge) { errors.push(`Door mesh "${name}" does not fit within its side face`); continue }
+    let door = [...doorTypes, ...newDoorTypes].find(type => sameDoorSize(type, { width, height }))
+    if (!door) {
+      const base = doorTypeName(width, height), taken = new Set([...doorTypes, ...newDoorTypes].map(type => type.id))
+      let id = base
+      for (let n = 2; taken.has(id); n++) id = `${base}_${n}`
+      door = { id, width, height }
+      newDoorTypes.push(door)
+    }
+    ports.push({ id: name, edge: placement.edge, doorTypeId: door.id, x: placement.x, y: placement.y, z: placement.z, allowedTypeIds: null })
+  }
+  return errors.length ? { ports: [], newDoorTypes: [], errors } : { ports, newDoorTypes, errors }
 }
 
 export function remapPorts(ports: Port[], before: Bounds, after: Bounds, width: number, height: number): Port[] {

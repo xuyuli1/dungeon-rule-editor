@@ -1,8 +1,11 @@
-export const SCHEMA_VERSION = 4 as const
+export const SCHEMA_VERSION = 5 as const
 export type Edge = 'N' | 'E' | 'S' | 'W'
 export type Point = { x: number; z: number }
 export type Bounds = { minX: number; maxX: number; minY: number; maxY: number; minZ: number; maxZ: number }
-export type Port = { id: string; edge: Edge; x: number; y: number; z: number; allowedTypeIds: string[] | null }
+// `doorTypeId` names the port's opening; ports join only when their door types are the same.
+export type Port = { id: string; edge: Edge; doorTypeId: string; x: number; y: number; z: number; allowedTypeIds: string[] | null }
+// A door opening size in millimetres. Sizes are unique per project (more than DOOR_MATCH_TOLERANCE apart).
+export type DoorType = { id: string; width: number; height: number }
 export type ModuleType = {
   id: string
   color: string
@@ -13,22 +16,22 @@ export type Module = { id: string; typeId: string; bounds: Bounds; ports: Port[]
 export type Connection = { from: string; to: string; weight: number }
 export type RuntimeProject = {
   schemaVersion: typeof SCHEMA_VERSION
-  settings: { modulesAfterStart: number; startTypeId: string; doorWidth: number; doorHeight: number }
+  settings: { modulesAfterStart: number; startTypeId: string }
+  doorTypes: DoorType[]
   types: ModuleType[]
   modules: Module[]
   connections: Connection[]
 }
 export type ExportedRules = Omit<RuntimeProject, 'types'> & { types: Omit<ModuleType, 'color'>[] }
 export type PanelRef = { kind: 'type' | 'module' | 'create-type'; id: string }
-// `libraryIds` holds module IDs edited in Models before assigning, keyed by library file name.
-export type EditorState = { graphPositions: Record<string, { x: number; y: number }>; modelNames: Record<string, string>; libraryIds: Record<string, string>; panel: PanelRef | null; seed: number }
+export type EditorState = { graphPositions: Record<string, { x: number; y: number }>; modelNames: Record<string, string>; panel: PanelRef | null; seed: number }
 
 export const emptyProject = (): RuntimeProject => ({
   schemaVersion: SCHEMA_VERSION,
-  settings: { modulesAfterStart: 20, startTypeId: '', doorWidth: 1000, doorHeight: 1000 },
-  types: [], modules: [], connections: [],
+  settings: { modulesAfterStart: 20, startTypeId: '' },
+  doorTypes: [], types: [], modules: [], connections: [],
 })
-export const emptyEditor = (): EditorState => ({ graphPositions: {}, modelNames: {}, libraryIds: {}, panel: null, seed: 1 })
+export const emptyEditor = (): EditorState => ({ graphPositions: {}, modelNames: {}, panel: null, seed: 1 })
 const panelKinds: PanelRef['kind'][] = ['type', 'module', 'create-type']
 const asPanel = (value: unknown): PanelRef | null => object(value) && panelKinds.includes(value.kind as PanelRef['kind']) && typeof value.id === 'string' ? { kind: value.kind as PanelRef['kind'], id: value.id } : null
 // Accepts saved editor state, including drafts and ZIPs from before the inspector panel, which stored floating `windows`.
@@ -36,9 +39,14 @@ export function normalizeEditor(value: unknown): EditorState {
   if (!object(value) || !object(value.graphPositions) || !object(value.modelNames) || !Number.isInteger(value.seed)) throw new Error('Incomplete editor data')
   const windows = Array.isArray(value.windows) ? [...value.windows].sort((a, b) => (object(a) && typeof a.z === 'number' ? a.z : 0) - (object(b) && typeof b.z === 'number' ? b.z : 0)) : []
   const panel = 'panel' in value ? asPanel(value.panel) : asPanel(windows.at(-1))
-  const libraryIds = object(value.libraryIds) ? Object.fromEntries(Object.entries(value.libraryIds).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) : {}
-  return { graphPositions: value.graphPositions as EditorState['graphPositions'], modelNames: value.modelNames as EditorState['modelNames'], libraryIds, panel, seed: value.seed as number }
+  return { graphPositions: value.graphPositions as EditorState['graphPositions'], modelNames: value.modelNames as EditorState['modelNames'], panel, seed: value.seed as number }
 }
+// Door sizes within this many millimetres count as the same door type when importing.
+export const DOOR_MATCH_TOLERANCE = 20
+export const doorTypeFor = (project: Pick<RuntimeProject, 'doorTypes'>, port: Pick<Port, 'doorTypeId'>) => project.doorTypes.find(door => door.id === port.doorTypeId)
+export const sameDoorSize = (a: Pick<DoorType, 'width' | 'height'>, b: Pick<DoorType, 'width' | 'height'>) => Math.abs(a.width - b.width) <= DOOR_MATCH_TOLERANCE && Math.abs(a.height - b.height) <= DOOR_MATCH_TOLERANCE
+// Default door type name from its size in whole centimetres, e.g. Door_400x400.
+export const doorTypeName = (width: number, height: number) => `Door_${Math.round(width / 10)}x${Math.round(height / 10)}`
 export const meters = (mm: number) => (mm / 1000).toFixed(3)
 export const toMm = (m: number) => Math.round(m * 1000)
 export const isId = (id: string) => /^[A-Za-z][A-Za-z0-9_-]*$/.test(id)
@@ -65,10 +73,17 @@ const integer = (value: number) => Number.isInteger(value)
 export function validateProject(project: RuntimeProject): string[] {
   const errors: string[] = []
   if (project.schemaVersion !== SCHEMA_VERSION) errors.push(`Unsupported data version ${project.schemaVersion}`)
-  const { modulesAfterStart, startTypeId, doorWidth, doorHeight } = project.settings
+  const { modulesAfterStart, startTypeId } = project.settings
   if (!integer(modulesAfterStart) || modulesAfterStart < 1 || modulesAfterStart > 500) errors.push('Modules after start must be an integer from 1 to 500')
-  if (!integer(doorWidth) || doorWidth <= 0) errors.push('Door width must be greater than zero')
-  if (!integer(doorHeight) || doorHeight <= 0) errors.push('Door height must be greater than zero')
+  const doorIds = new Set<string>()
+  project.doorTypes.forEach((door, i) => {
+    if (!isId(door.id)) errors.push(`Invalid door type ID ${door.id || '(empty)'}: start with a letter; use letters, numbers, _ or -`)
+    if (doorIds.has(door.id)) errors.push(`Duplicate door type ID: ${door.id}`)
+    doorIds.add(door.id)
+    if (!integer(door.width) || door.width <= 0 || !integer(door.height) || door.height <= 0) errors.push(`Door type ${door.id} needs a width and height greater than zero`)
+    const twin = project.doorTypes.slice(0, i).find(other => sameDoorSize(other, door))
+    if (twin) errors.push(`Door types ${twin.id} and ${door.id} are the same size (within ${DOOR_MATCH_TOLERANCE / 10} cm); each size must be one door type`)
+  })
   if (!project.types.length) errors.push('Add at least one type')
   const typeIds = new Set<string>()
   for (const type of project.types) {
@@ -101,7 +116,9 @@ export function validateProject(project: RuntimeProject): string[] {
       portIds.add(port.id)
       if (!['N', 'E', 'S', 'W'].includes(port.edge) || !integer(port.x) || !integer(port.y) || !integer(port.z)) errors.push(`Module ${module.id} has an invalid port ${port.id}`)
       if (port.allowedTypeIds !== null && (!Array.isArray(port.allowedTypeIds) || new Set(port.allowedTypeIds).size !== port.allowedTypeIds.length || port.allowedTypeIds.some(id => !typeIds.has(id)))) errors.push(`Port ${port.id} on module ${module.id} has invalid target types`)
-      const half = doorWidth / 2
+      const door = doorTypeFor(project, port)
+      if (!door) { errors.push(`Port ${port.id} on module ${module.id} needs a valid door type`); continue }
+      const half = door.width / 2, doorHeight = door.height
       const valid = port.edge === 'N' ? port.z === b.maxZ && port.x >= b.minX + half && port.x <= b.maxX - half
         : port.edge === 'S' ? port.z === b.minZ && port.x >= b.minX + half && port.x <= b.maxX - half
           : port.edge === 'E' ? port.x === b.maxX && port.z >= b.minZ + half && port.z <= b.maxZ - half
@@ -123,16 +140,17 @@ export function validateProject(project: RuntimeProject): string[] {
 
 function object(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value) }
 export function parseRuntime(value: unknown): RuntimeProject {
-  if (object(value) && value.schemaVersion !== SCHEMA_VERSION) throw new Error(`Unsupported data version ${String(value.schemaVersion)}; this editor requires v4`)
-  if (!object(value) || !object(value.settings) || !Array.isArray(value.types) || !Array.isArray(value.modules) || !Array.isArray(value.connections)) throw new Error('Invalid JSON structure')
+  if (object(value) && value.schemaVersion !== SCHEMA_VERSION) throw new Error(`Unsupported data version ${String(value.schemaVersion)}; this editor requires v${SCHEMA_VERSION}`)
+  if (!object(value) || !object(value.settings) || !Array.isArray(value.doorTypes) || !Array.isArray(value.types) || !Array.isArray(value.modules) || !Array.isArray(value.connections)) throw new Error('Invalid JSON structure')
   const project = value as RuntimeProject
-  if (typeof project.settings.modulesAfterStart !== 'number' || typeof project.settings.startTypeId !== 'string' || typeof project.settings.doorWidth !== 'number' || typeof project.settings.doorHeight !== 'number') throw new Error('Invalid map settings')
+  if (typeof project.settings.modulesAfterStart !== 'number' || typeof project.settings.startTypeId !== 'string') throw new Error('Invalid map settings')
+  for (const door of project.doorTypes) if (!object(door) || typeof door.id !== 'string' || typeof door.width !== 'number' || typeof door.height !== 'number') throw new Error('Invalid door type data')
   for (const [index, t] of project.types.entries()) {
     if (!object(t) || typeof t.id !== 'string' || typeof t.percent !== 'number' || typeof t.requiredMin !== 'number') throw new Error('Invalid type data')
     if (typeof t.color !== 'string') t.color = ['#65b9d4', '#c987f0', '#efb565', '#83caa0', '#d58a9b'][index % 5]
   }
   for (const m of project.modules) {
-    if (!object(m) || typeof m.id !== 'string' || typeof m.typeId !== 'string' || !object(m.bounds) || ['minX', 'maxX', 'minY', 'maxY', 'minZ', 'maxZ'].some(k => typeof m.bounds[k as keyof Bounds] !== 'number') || !Array.isArray(m.ports) || m.ports.some((p: Port) => !object(p) || typeof p.id !== 'string' || typeof p.edge !== 'string' || typeof p.x !== 'number' || typeof p.y !== 'number' || typeof p.z !== 'number' || !(p.allowedTypeIds === null || Array.isArray(p.allowedTypeIds) && p.allowedTypeIds.every(id => typeof id === 'string')))) throw new Error('Invalid module data')
+    if (!object(m) || typeof m.id !== 'string' || typeof m.typeId !== 'string' || !object(m.bounds) || ['minX', 'maxX', 'minY', 'maxY', 'minZ', 'maxZ'].some(k => typeof m.bounds[k as keyof Bounds] !== 'number') || !Array.isArray(m.ports) || m.ports.some((p: Port) => !object(p) || typeof p.id !== 'string' || typeof p.edge !== 'string' || typeof p.doorTypeId !== 'string' || typeof p.x !== 'number' || typeof p.y !== 'number' || typeof p.z !== 'number' || !(p.allowedTypeIds === null || Array.isArray(p.allowedTypeIds) && p.allowedTypeIds.every(id => typeof id === 'string')))) throw new Error('Invalid module data')
   }
   for (const c of project.connections) if (!object(c) || typeof c.from !== 'string' || typeof c.to !== 'string' || typeof c.weight !== 'number') throw new Error('Invalid connection data')
   return project
@@ -142,6 +160,7 @@ export function exportRules(project: RuntimeProject): ExportedRules {
   return {
     schemaVersion: project.schemaVersion,
     settings: { ...project.settings },
+    doorTypes: structuredClone(project.doorTypes),
     types: project.types.map(({ id, percent, requiredMin }) => ({ id, percent, requiredMin })),
     modules: structuredClone(project.modules),
     connections: structuredClone(project.connections),
@@ -151,11 +170,13 @@ export function exportRules(project: RuntimeProject): ExportedRules {
 export function exampleProject(): RuntimeProject {
   const type = (id: string, color: string, percent: number, requiredMin: number): ModuleType => ({ id, color, percent, requiredMin })
   const bounds = { minX: -4000, maxX: 4000, minY: 0, maxY: 3000, minZ: -4000, maxZ: 4000 }
-  const ports = (): Port[] => [{ id: 'north', edge: 'N', x: 0, y: 1500, z: 4000, allowedTypeIds: null }, { id: 'east', edge: 'E', x: 4000, y: 1500, z: 0, allowedTypeIds: null }, { id: 'south', edge: 'S', x: 0, y: 1500, z: -4000, allowedTypeIds: null }, { id: 'west', edge: 'W', x: -4000, y: 1500, z: 0, allowedTypeIds: null }]
+  const door = 'Door_100x100'
+  const ports = (): Port[] => [{ id: 'north', edge: 'N', doorTypeId: door, x: 0, y: 1500, z: 4000, allowedTypeIds: null }, { id: 'east', edge: 'E', doorTypeId: door, x: 4000, y: 1500, z: 0, allowedTypeIds: null }, { id: 'south', edge: 'S', doorTypeId: door, x: 0, y: 1500, z: -4000, allowedTypeIds: null }, { id: 'west', edge: 'W', doorTypeId: door, x: -4000, y: 1500, z: 0, allowedTypeIds: null }]
   const module = (id: string, typeId: string): Module => ({ id, typeId, bounds: { ...bounds }, ports: ports() })
   const project: RuntimeProject = {
     schemaVersion: SCHEMA_VERSION,
-    settings: { modulesAfterStart: 9, startTypeId: 'entrance', doorWidth: 1000, doorHeight: 1000 },
+    settings: { modulesAfterStart: 9, startTypeId: 'entrance' },
+    doorTypes: [{ id: door, width: 1000, height: 1000 }],
     types: [type('entrance', '#c987f0', 0, 0), type('basic', '#65b9d4', 75, 0), type('special', '#efb565', 25, 0)],
     modules: [module('entry_a', 'entrance'), module('room_a', 'basic'), module('room_b', 'basic'), module('special_a', 'special')],
     connections: [{ from: 'entrance', to: 'basic', weight: 3 }, { from: 'basic', to: 'basic', weight: 2 }, { from: 'basic', to: 'special', weight: 1 }],

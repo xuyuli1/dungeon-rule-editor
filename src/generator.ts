@@ -1,4 +1,4 @@
-import { compareId, type Bounds, type Edge, type Module, type Point, type RuntimeProject, type Port, typeTargets, validateProject, weightFor } from './model'
+import { compareId, doorTypeFor, type Bounds, type Edge, type Module, type Point, type RuntimeProject, type Port, typeTargets, validateProject, weightFor } from './model'
 
 export type Placement = { instanceId: string; moduleId: string; typeId: string; x: number; y: number; z: number; rotation: 0 | 1 | 2 | 3; parent?: { instanceId: string; parentPortId: string; ownPortId: string } }
 export type PreviewDoor = { instanceId: string; portId: string; connected: boolean; edge: Edge; x: number; y: number; z: number; width: number; height: number }
@@ -55,9 +55,10 @@ export function previewDoors(project: RuntimeProject, placements: Placement[]): 
       const center = rotate(port, placement.rotation)
       const direction = rotate(normal(port.edge), placement.rotation)
       const edge: Edge = direction.z > 0 ? 'N' : direction.x > 0 ? 'E' : direction.z < 0 ? 'S' : 'W'
+      const door = doorTypeFor(project, port)
       doors.push({ instanceId: placement.instanceId, portId: port.id, connected: childDoors.has(portKey), edge,
         x: placement.x + center.x, y: placement.y + port.y, z: placement.z + center.z,
-        width: project.settings.doorWidth, height: project.settings.doorHeight })
+        width: door?.width ?? 0, height: door?.height ?? 0 })
     }
   }
   return doors
@@ -147,7 +148,7 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
             const weight = weightFor(project.connections, parent.typeId, child.typeId)
             if (weight <= 0 || !portAllows(parentPort, child.typeId)) continue
             for (const childPort of child.ports) for (const rotation of [0, 1, 2, 3] as const) {
-              if (!portAllows(childPort, parent.typeId)) continue
+              if (childPort.doorTypeId !== parentPort.doorTypeId || !portAllows(childPort, parent.typeId)) continue
               const childNormal = rotate(normal(childPort.edge), rotation)
               if (childNormal.x !== -parentNormal.x || childNormal.z !== -parentNormal.z) continue
               checks++

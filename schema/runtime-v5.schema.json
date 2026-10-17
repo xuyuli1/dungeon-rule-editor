@@ -1,28 +1,27 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.invalid/dungeon-rules/v4",
-  "title": "Dungeon rules runtime JSON v4",
+  "$id": "https://example.invalid/dungeon-rules/v5",
+  "title": "Dungeon rules runtime JSON v5",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schemaVersion",
     "settings",
+    "doorTypes",
     "types",
     "modules",
     "connections"
   ],
   "properties": {
     "schemaVersion": {
-      "const": 4
+      "const": 5
     },
     "settings": {
       "type": "object",
       "additionalProperties": false,
       "required": [
         "modulesAfterStart",
-        "startTypeId",
-        "doorWidth",
-        "doorHeight"
+        "startTypeId"
       ],
       "properties": {
         "modulesAfterStart": {
@@ -33,18 +32,15 @@
         },
         "startTypeId": {
           "$ref": "#/$defs/id"
-        },
-        "doorWidth": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Millimetres; shared by all ports"
-        },
-        "doorHeight": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Millimetres; shared by all ports"
         }
       }
+    },
+    "doorTypes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/doorType"
+      },
+      "description": "Door opening sizes. Each size appears once (sizes differ by more than 20 mm); ports join only when their door types are the same"
     },
     "types": {
       "type": "array",
@@ -132,6 +128,7 @@
       "required": [
         "id",
         "edge",
+        "doorTypeId",
         "x",
         "y",
         "z",
@@ -148,6 +145,10 @@
             "S",
             "W"
           ]
+        },
+        "doorTypeId": {
+          "$ref": "#/$defs/id",
+          "description": "A doorTypes id; also gives the opening width and height"
         },
         "x": {
           "type": "integer"
@@ -220,6 +221,30 @@
         "weight": {
           "type": "number",
           "exclusiveMinimum": 0
+        }
+      }
+    },
+    "doorType": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "width",
+        "height"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Millimetres, along the side face"
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Millimetres"
         }
       }
     }

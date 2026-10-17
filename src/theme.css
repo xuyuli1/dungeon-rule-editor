@@ -150,3 +150,14 @@ input, select { font-size: var(--fs-sm); }
 .xyz-pending { color: #f5cf90; font-style: normal; font-weight: 400; }
 .port-duplicate { flex: none; padding: 3px 8px; font-size: var(--fs-xs); color: #cfe0e0; }
 .port-popover-head .port-duplicate { padding: 0 4px; font-size: 11px; }
+
+/* Door types list in the Rule network settings: one compact row per opening size. */
+.door-types { margin: -8px 0 21px; padding: 12px 16px; background: #172a33; border: 1px solid #344750; }
+.door-types .section-head { align-items: center; margin-bottom: 8px; }
+.door-types .section-head h3 { margin: 0; }
+.door-type-list { display: grid; gap: 6px; }
+.door-type-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) auto auto; align-items: end; gap: 10px; }
+.door-type-row .field { margin: 0; }
+.door-type-used { padding-bottom: 9px; color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
+.door-type-row button.icon { margin-bottom: 4px; }
+@media (max-width: 640px) { .door-type-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .door-type-row .field:first-child { grid-column: 1 / -1; } }

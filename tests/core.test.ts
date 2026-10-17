@@ -1,13 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import JSZip from 'jszip'
-import { emptyEditor, exampleProject, exportRules, normalizeEditor, parseRuntime, typeTargets, validateProject, type RuntimeProject } from '../src/model'
+import { emptyEditor, emptyProject, exampleProject, exportRules, normalizeEditor, parseRuntime, typeTargets, validateProject, type Bounds, type RuntimeProject } from '../src/model'
 import { generate, overlaps, previewDoors, rotatedBounds, rotate } from '../src/generator'
-import { nearestValidPort, portAtBoundary, remapPorts } from '../src/geometry'
-import { buildProjectZip, fbxMetersPerUnit, openProject } from '../src/io'
+import { nearestValidPort, portAtBoundary, portsFromDoorMarkers, remapPorts } from '../src/geometry'
+import { buildProjectZip, fbxMetersPerUnit, fbxModelNames, openProject, type FbxAnalysis } from '../src/io'
+import { applyImports } from '../src/importer'
 import { renameType } from '../src/editorActions'
 import { nextTypeColor, typeColorSwatches } from '../src/typeColors'
 
-describe('v4 map rules', () => {
+// A 6 x 4 x 6 m room centred on the origin, as door markers would see it (millimetres).
+const room: Bounds = { minX: -3000, maxX: 3000, minY: 0, maxY: 4000, minZ: -3000, maxZ: 3000 }
+const marker = (name: string, box: Bounds) => ({ name, box })
+const analysis = (moduleId: string, markers: FbxAnalysis['markers']): FbxAnalysis => ({ moduleId, typeHint: moduleId.split('_')[0], bounds: room, markers, mainFound: true })
+
+describe('v5 map rules', () => {
   it('keeps preset and generated type colors distinct', () => {
     expect(nextTypeColor(['#E85D5D'])).toBe('#f28c5b')
     const used = typeColorSwatches.slice(6)
@@ -20,8 +26,8 @@ describe('v4 map rules', () => {
     expect(fbxMetersPerUnit(undefined)).toBe(.01)
     const before = { minX: -2000, maxX: 2000, minY: 0, maxY: 4000, minZ: -2000, maxZ: 2000 }
     const after = { minX: -4000, maxX: 4000, minY: 1000, maxY: 9000, minZ: -4000, maxZ: 4000 }
-    expect(remapPorts([{ id: 'a', edge: 'N', x: 1000, y: 1000, z: 2000, allowedTypeIds: null }], before, after, 1000, 1000))
-      .toEqual([{ id: 'a', edge: 'N', x: 2000, y: 3000, z: 4000, allowedTypeIds: null }])
+    expect(remapPorts([{ id: 'a', edge: 'N', doorTypeId: 'd', x: 1000, y: 1000, z: 2000, allowedTypeIds: null }], before, after, 1000, 1000))
+      .toEqual([{ id: 'a', edge: 'N', doorTypeId: 'd', x: 2000, y: 3000, z: 4000, allowedTypeIds: null }])
   })
   it('uses largest remainders and keeps required minima inside targets', () => {
     const project = exampleProject()
@@ -51,10 +57,11 @@ describe('v4 map rules', () => {
     ]
     project.settings.startTypeId = 'start'
     const [start, stair, room] = project.modules.slice(0, 3).map(module => structuredClone(module))
-    start.id = 'start_a'; start.typeId = 'start'; start.ports = [{ id: 'exit', edge: 'E', x: 4000, y: 1500, z: 0, allowedTypeIds: null }]
+    const doorTypeId = 'Door_100x100'
+    start.id = 'start_a'; start.typeId = 'start'; start.ports = [{ id: 'exit', edge: 'E', doorTypeId, x: 4000, y: 1500, z: 0, allowedTypeIds: null }]
     stair.id = 'stair_a'; stair.typeId = 'stair'; stair.bounds.maxY = 6000
-    stair.ports = [{ id: 'lower', edge: 'W', x: -4000, y: 1500, z: 0, allowedTypeIds: null }, { id: 'upper', edge: 'E', x: 4000, y: 4500, z: 0, allowedTypeIds: null }]
-    room.id = 'room_a'; room.typeId = 'room'; room.ports = [{ id: 'entry', edge: 'W', x: -4000, y: 1500, z: 0, allowedTypeIds: null }]
+    stair.ports = [{ id: 'lower', edge: 'W', doorTypeId, x: -4000, y: 1500, z: 0, allowedTypeIds: null }, { id: 'upper', edge: 'E', doorTypeId, x: 4000, y: 4500, z: 0, allowedTypeIds: null }]
+    room.id = 'room_a'; room.typeId = 'room'; room.ports = [{ id: 'entry', edge: 'W', doorTypeId, x: -4000, y: 1500, z: 0, allowedTypeIds: null }]
     project.modules = [start, stair, room]
     project.connections = [{ from: 'start', to: 'stair', weight: 1 }, { from: 'stair', to: 'room', weight: 1 }]
     expect(validateProject(project)).toEqual([])
@@ -109,17 +116,105 @@ describe('v4 map rules', () => {
     project.modules.filter(m => m.typeId === 'basic').forEach(m => m.ports.forEach(port => { port.allowedTypeIds = null }))
     expect(generate(project, 42).complete).toBe(true)
   })
-  it('exports only v4 map data and rejects older versions', () => {
+  it('only joins ports of the same door type', () => {
+    const project = exampleProject()
+    project.doorTypes.push({ id: 'Door_200x100', width: 2000, height: 1000 })
+    project.modules.filter(m => m.typeId !== 'entrance').forEach(m => m.ports.forEach(port => { port.doorTypeId = 'Door_200x100' }))
+    expect(validateProject(project)).toEqual([])
+    const result = generate(project, 42, undefined, 2000, 2)
+    expect(result.complete).toBe(false)
+    expect(result.placements).toHaveLength(1)
+  })
+  it('validates door types: unique sizes and ports that reference one', () => {
+    const project = exampleProject()
+    project.doorTypes.push({ id: 'Door_101x100', width: 1010, height: 1000 })
+    expect(validateProject(project).some(error => error.includes('are the same size'))).toBe(true)
+    project.doorTypes.pop()
+    project.modules[0].ports[0].doorTypeId = 'missing'
+    expect(validateProject(project).some(error => error.includes('needs a valid door type'))).toBe(true)
+    expect(validateProject({ ...emptyProject(), types: [{ id: 'a', color: '#ffffff', percent: 0, requiredMin: 0 }], settings: { modulesAfterStart: 1, startTypeId: 'a' } }).some(error => error.includes('door type'))).toBe(false)
+  })
+  it('turns door meshes into ports on the face their centre lies on', () => {
+    const doors = [
+      marker('Room_Door01', { minX: 3000, maxX: 3000, minY: 100, maxY: 3100, minZ: -1500, maxZ: 1500 }),
+      marker('Room_Door02', { minX: -1000, maxX: 1000, minY: 100, maxY: 2100, minZ: -3010, maxZ: -2990 }),
+      marker('Room_Door03', { minX: -3000, maxX: -3000, minY: 100, maxY: 3100, minZ: -1490, maxZ: 1510 }),
+      marker('Room_Door04', { minX: -500, maxX: 1500, minY: 100, maxY: 2100, minZ: 3000, maxZ: 3000 }),
+    ]
+    const result = portsFromDoorMarkers(room, doors, [{ id: 'Big', width: 3000, height: 3000 }])
+    expect(result.errors).toEqual([])
+    expect(result.ports.map(p => [p.id, p.edge, p.doorTypeId, p.x, p.y, p.z])).toEqual([
+      ['Room_Door01', 'E', 'Big', 3000, 1600, 0],
+      ['Room_Door02', 'S', 'Door_200x200', 0, 1100, -3000],
+      ['Room_Door03', 'W', 'Big', -3000, 1600, 10],
+      ['Room_Door04', 'N', 'Door_200x200', 500, 1100, 3000],
+    ])
+    expect(result.newDoorTypes).toEqual([{ id: 'Door_200x200', width: 2000, height: 2000 }])
+  })
+  it('reports bad door meshes instead of guessing or renaming', () => {
+    const onFace = { minX: -500, maxX: 500, minY: 0, maxY: 1000, minZ: 3000, maxZ: 3000 }
+    expect(portsFromDoorMarkers(room, [marker('ns:Door01', onFace)], []).errors[0]).toContain('not a valid port ID')
+    expect(portsFromDoorMarkers(room, [marker('Door', onFace), marker('Door', onFace)], []).errors[0]).toContain('Two door meshes')
+    expect(portsFromDoorMarkers(room, [marker('Door', { ...onFace, minZ: 0, maxZ: 0 })], []).errors[0]).toContain('not on a side face')
+    expect(portsFromDoorMarkers(room, [marker('Door', { ...onFace, minX: 2500, maxX: 3500 })], []).errors[0]).toContain('does not fit')
+    const mixed = portsFromDoorMarkers(room, [marker('Good', onFace), marker('9bad', onFace)], [])
+    expect(mixed.ports).toEqual([])
+  })
+  it('imports FBX analyses: types from file names, door types by size, replace rebuilds ports', () => {
+    const door = (name: string) => marker(name, { minX: 3000, maxX: 3000, minY: 0, maxY: 4000, minZ: -2000, maxZ: 2000 })
+    const first = applyImports(emptyProject(), [
+      { fileName: 'CorridorConnection_Ten_Small.fbx', analysis: analysis('CorridorConnection_Ten_Small', [door('CorridorConnection_Ten_Small_Door01')]), target: { kind: 'new', typeId: 'CorridorConnection' } },
+      { fileName: 'StairsRoom.fbx', analysis: analysis('StairsRoom', [door('StairsRoom_Door01')]), target: { kind: 'new', typeId: 'StairsRoom' } },
+      { fileName: 'chaguan03(1).fbx', analysis: analysis('chaguan03(1)', []), target: { kind: 'new', typeId: 'chaguan03(1)' } },
+    ])
+    expect(first.outcomes.map(o => o.ok)).toEqual([true, true, false])
+    expect(first.project.types.map(t => t.id)).toEqual(['CorridorConnection', 'StairsRoom'])
+    expect(first.project.doorTypes).toEqual([{ id: 'Door_400x400', width: 4000, height: 4000 }])
+    expect(first.project.modules.map(m => [m.id, m.typeId, m.ports.map(p => `${p.id}:${p.doorTypeId}`)])).toEqual([
+      ['CorridorConnection_Ten_Small', 'CorridorConnection', ['CorridorConnection_Ten_Small_Door01:Door_400x400']],
+      ['StairsRoom', 'StairsRoom', ['StairsRoom_Door01:Door_400x400']],
+    ])
+    const renamed = structuredClone(first.project); renamed.doorTypes[0].id = 'Big'; renamed.modules.forEach(m => m.ports.forEach(p => { p.doorTypeId = 'Big' }))
+    const replaced = applyImports(renamed, [{ fileName: 'StairsRoom_B.fbx', analysis: analysis('StairsRoom_B', [door('X_Door'), door('Y_Door')]), target: { kind: 'replace', moduleId: 'StairsRoom' } }])
+    expect(replaced.outcomes[0]).toMatchObject({ ok: true, replaced: 'StairsRoom', moduleId: 'StairsRoom_B' })
+    expect(replaced.project.doorTypes.map(d => d.id)).toEqual(['Big'])
+    expect(replaced.project.modules[1]).toMatchObject({ id: 'StairsRoom_B', typeId: 'StairsRoom' })
+    expect(replaced.project.modules[1].ports.map(p => p.id)).toEqual(['X_Door', 'Y_Door'])
+    expect(applyImports(first.project, [{ fileName: 'StairsRoom.fbx', analysis: analysis('StairsRoom', []), target: { kind: 'new', typeId: 'StairsRoom' } }]).outcomes[0].message).toContain('already exists')
+  })
+  it('reads original model names from binary and ASCII FBX', () => {
+    const ascii = new TextEncoder().encode('Objects:  {\n Model: 123, "Model::ns:Door 01", "Mesh" {\n }\n Model: 124, "Model::Room", "Mesh" {\n }\n}')
+    expect(fbxModelNames(ascii.buffer)).toEqual(['ns:Door 01', 'Room'])
+    // Binary FBX 7.4 (32-bit records): header, an Objects node holding one Model record, then the null terminators.
+    const name = new TextEncoder().encode('Room_Door01\u0000\u0001Model'), props = new Uint8Array(9 + 5 + name.length)
+    const pv = new DataView(props.buffer); props[0] = 0x4c; pv.setBigInt64(1, 7n, true); props[9] = 0x53; pv.setUint32(10, name.length, true); props.set(name, 14)
+    const record = (nodeName: string, properties: Uint8Array, children: Uint8Array, start: number, count = 0) => {
+      const label = new TextEncoder().encode(nodeName), size = 13 + label.length + properties.length + children.length
+      const out = new Uint8Array(size), view = new DataView(out.buffer)
+      view.setUint32(0, start + size, true); view.setUint32(4, count, true); view.setUint32(8, properties.length, true); out[12] = label.length
+      out.set(label, 13); out.set(properties, 13 + label.length); out.set(children, 13 + label.length + properties.length)
+      return out
+    }
+    const header = new Uint8Array(27); header.set(new TextEncoder().encode('Kaydara FBX Binary  \u0000'), 0); new DataView(header.buffer).setUint32(23, 7400, true)
+    const objectsHead = 27 + 13 + 'Objects'.length
+    const model = record('Model', props, new Uint8Array(13), objectsHead, 2)
+    const objects = record('Objects', new Uint8Array(0), new Uint8Array([...model, ...new Uint8Array(13)]), 27)
+    const file = new Uint8Array([...header, ...objects, ...new Uint8Array(13)])
+    expect(fbxModelNames(file.buffer)).toEqual(['Room_Door01'])
+  })
+  it('exports only v5 map data and rejects older versions', () => {
     const project = exampleProject()
     const exported = exportRules(project)
-    expect(exported.schemaVersion).toBe(4)
+    expect(exported.schemaVersion).toBe(5)
+    expect(exported.doorTypes).toEqual([{ id: 'Door_100x100', width: 1000, height: 1000 }])
+    expect(exported.modules[0].ports[0].doorTypeId).toBe('Door_100x100')
     expect(exported.types[0]).not.toHaveProperty('color')
     expect(exported.modules[0]).not.toHaveProperty('items')
     expect(exported.modules[0]).not.toHaveProperty('enemies')
     expect(exported.modules[0].bounds).toHaveProperty('minY')
     expect(exported.modules[0].ports[0]).toHaveProperty('y')
-    expect(parseRuntime(JSON.parse(JSON.stringify(exported))).settings.doorHeight).toBe(1000)
-    expect(() => parseRuntime({ ...exported, schemaVersion: 3 })).toThrow('requires v4')
+    expect(parseRuntime(JSON.parse(JSON.stringify(exported))).doorTypes[0].height).toBe(1000)
+    expect(() => parseRuntime({ ...exported, schemaVersion: 4 })).toThrow('requires v5')
   })
   it('keeps directional weights when renaming a type', () => {
     const project = exampleProject()
@@ -128,27 +223,26 @@ describe('v4 map rules', () => {
     expect(changed.editor.panel).toEqual({ kind: 'type', id: 'z_basic' })
     expect(changed.project.connections).toEqual([{ from: 'z_basic', to: 'special', weight: 3 }, { from: 'special', to: 'z_basic', weight: 1 }])
   })
-  it('stores v4 rules, layout and FBX bytes in a project ZIP', async () => {
+  it('stores v5 rules, layout and FBX bytes in a project ZIP', async () => {
     const project = exampleProject(), editor = emptyEditor()
     const file = new Blob([new Uint8Array([1, 2, 3])])
     const zip = await JSZip.loadAsync(await buildProjectZip(project, editor, new Map([['room_a', file]])))
     const saved = JSON.parse(await zip.file('project.json')!.async('text')) as { version: number; runtime: RuntimeProject }
-    expect(saved.version).toBe(4)
+    expect(saved.version).toBe(5)
     expect(saved.runtime.modules[0].bounds.minY).toBe(0)
     expect([...await zip.file('assets/room_a.fbx')!.async('uint8array')]).toEqual([1, 2, 3])
     const reopened = await openProject(new File([await buildProjectZip(project, editor, new Map([['room_a', file]]))], 'project.zip'))
     expect(reopened.project.modules).toHaveLength(project.modules.length)
     expect(reopened.files.get('room_a')?.name).toBe('room_a.fbx')
     expect(reopened.library.size).toBe(0)
-    saved.version = 3; zip.file('project.json', JSON.stringify(saved))
-    await expect(openProject(new File([await zip.generateAsync({ type: 'blob' })], 'old.zip'))).rejects.toThrow('requires v4')
+    saved.version = 4; zip.file('project.json', JSON.stringify(saved))
+    await expect(openProject(new File([await zip.generateAsync({ type: 'blob' })], 'old.zip'))).rejects.toThrow('requires v5')
   })
   it('keeps unassigned library models in the project ZIP', async () => {
-    const project = exampleProject(), editor = { ...emptyEditor(), libraryIds: { 'Stairs Room.fbx': 'stairsRoom' } }
+    const project = exampleProject(), editor = emptyEditor()
     const library = new Map([['Stairs Room.fbx', new Blob([new Uint8Array([4, 5])])], ['hall.fbx', new Blob([new Uint8Array([6])])]])
     const reopened = await openProject(new File([await buildProjectZip(project, editor, new Map(), library)], 'project.zip'))
     expect([...reopened.library.keys()]).toEqual(['Stairs Room.fbx', 'hall.fbx'])
-    expect(reopened.editor.libraryIds).toEqual({ 'Stairs Room.fbx': 'stairsRoom' })
     expect([...new Uint8Array(await reopened.library.get('Stairs Room.fbx')!.arrayBuffer())]).toEqual([4, 5])
     const zip = await JSZip.loadAsync(await buildProjectZip(project, editor, new Map(), library))
     const saved = JSON.parse(await zip.file('project.json')!.async('text')) as { library?: unknown }
@@ -157,7 +251,7 @@ describe('v4 map rules', () => {
   })
   it('opens editor state saved with floating windows as one inspector panel', () => {
     const old = { graphPositions: {}, modelNames: {}, seed: 7, windows: [{ kind: 'module', id: 'room_a', x: 0, y: 0, width: 1, height: 1, z: 104 }, { kind: 'type', id: 'basic', x: 0, y: 0, width: 1, height: 1, z: 102 }] }
-    expect(normalizeEditor(old)).toEqual({ graphPositions: {}, modelNames: {}, libraryIds: {}, seed: 7, panel: { kind: 'module', id: 'room_a' } })
+    expect(normalizeEditor(old)).toEqual({ graphPositions: {}, modelNames: {}, seed: 7, panel: { kind: 'module', id: 'room_a' } })
     expect(normalizeEditor({ ...emptyEditor(), panel: { kind: 'type', id: 'basic' } }).panel).toEqual({ kind: 'type', id: 'basic' })
     expect(() => normalizeEditor({ seed: 1 })).toThrow('Incomplete editor data')
   })
