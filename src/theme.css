@@ -13,7 +13,7 @@
   --border: #354750;
   --border-strong: #5b6f76;
   --focus: #91e6dc;
-  --inspector-width: min(480px, 100vw);
+  --inspector-width: min(460px, calc(100vw - 24px));
   font-family: var(--font-ui);
   font-size: var(--fs-md);
   letter-spacing: normal;
@@ -81,8 +81,9 @@ input, select { font-size: var(--fs-sm); }
   .library-row select { grid-column: 1 / 2; }
 }
 
-/* Docked inspector: every type, module and new-type view opens here, one at a time. */
-.inspector { position: fixed; z-index: 60; top: 0; right: 0; bottom: 0; width: var(--inspector-width); display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid #6f858b; box-shadow: -18px 0 50px #0008; animation: inspector-in .16s ease-out; }
+/* Inspector: every type, module and new-type view opens in this card, one at a time. It floats over the page, which keeps its layout. */
+.inspector { position: fixed; z-index: 60; top: 12px; right: 12px; bottom: 12px; width: var(--inspector-width); display: flex; flex-direction: column; overflow: hidden; background: var(--panel); border: 1px solid #6f858b; box-shadow: 0 18px 60px #000a, 0 0 0 1px #0006; animation: inspector-in .16s ease-out; }
+@media (max-width: 520px) { .inspector { inset: 0; width: auto; border: 0; } }
 .inspector-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px; border-bottom: 1px solid #40565e; }
 .inspector-head > div { display: grid; gap: 3px; min-width: 0; }
 .inspector-kind { color: var(--muted); font: 600 var(--fs-xs) var(--font-ui); }
@@ -96,10 +97,7 @@ input, select { font-size: var(--fs-sm); }
 .fbx-drop .fbx-drop-actions { display: flex; gap: 8px; flex-wrap: wrap; width: 100%; }
 .fbx-drop .fbx-drop-actions select { width: auto; flex: 1; min-width: 150px; }
 @keyframes inspector-in { from { opacity: .6; transform: translateX(16px); } to { opacity: 1; transform: none; } }
-@media (min-width: 1200px) {
-  .inspector-open .editor-workspace { width: calc(100% - var(--inspector-width)); margin: 0; }
-  .inspector-open .notice { right: calc(var(--inspector-width) + 24px); }
-}
+@media (min-width: 1200px) { .inspector-open .notice { right: calc(var(--inspector-width) + 36px); } }
 @media (max-width: 1199px) { .inspector-open .notice { z-index: 65; } }
 @media (prefers-reduced-motion: reduce) { .inspector { animation: none; } }
 
@@ -118,3 +116,22 @@ input, select { font-size: var(--fs-sm); }
 .preview-panel .preview-stage { place-items: stretch; align-content: start; height: auto; }
 .preview-panel .preview-stage > .placeholder { align-self: center; justify-self: center; }
 .preview-panel .three-canvas-shell { min-height: 0; border: 0; }
+
+/* Port popup in the module 3D view: a compact card in the bottom-left corner, clear of the toolbar, so the box stays visible. */
+.three-canvas-stage { position: relative; }
+.three-selection { bottom: 8px; left: 8px; }
+.port-popover { top: auto; bottom: 8px; left: 8px; width: min(216px, calc(100% - 16px)); padding: 8px; background: #13252ee6; border-color: #5b6f76; box-shadow: 0 6px 18px #0008; }
+.port-popover-head { gap: 6px; margin-bottom: 6px; }
+.port-popover-head strong { font-size: var(--fs-sm); }
+.port-popover-head button.danger-text { padding: 0 2px; font-size: 11px; }
+.port-popover-head button.icon { width: 22px; height: 22px; font-size: 15px; }
+.port-popover .field { gap: 3px; margin-bottom: 6px; }
+.port-popover .field > span { font-size: 11px; }
+.port-popover input, .port-popover select { padding: 4px 6px; font-size: var(--fs-xs); }
+.port-popover .xyz-input span { padding: 0 2px 0 6px; font-size: 10px; }
+.port-popover .xyz-input input { padding: 4px 2px; }
+.port-popover .type-multiselect summary { padding: 4px 6px; font-size: var(--fs-xs); }
+.port-popover .type-multiselect label { padding: 3px; font-size: var(--fs-xs); }
+.port-popover .type-multiselect button { padding: 4px 6px; font-size: var(--fs-xs); }
+.port-popover .hint { display: none; }
+.port-popover .field-error { margin: -2px 0 6px; font-size: 11px; }

@@ -320,12 +320,15 @@ export function ThreeCanvas(props: Props) {
       {speedRows.map(([key, label]) => <label key={key} className="camera-speed"><span>{label}</span><input type="range" min={CAMERA_SPEED_MIN} max={CAMERA_SPEED_MAX} step={0.1} value={cameraSpeeds[key]} onChange={e => setCameraSpeeds({ [key]: Number(e.target.value) })} /><output>{cameraSpeeds[key].toFixed(1)}×</output></label>)}
       <button className="quiet" onClick={() => setCameraSpeeds(defaultCameraSpeeds)}>Reset</button>
     </div>}
-    <div className="three-canvas" ref={root} tabIndex={0} aria-label={props.module ? '3D module and connector editor' : '3D map preview'} />
+    {/* The stage wraps only the 3D view, so overlays anchor to its corners rather than to the help line below. */}
+    <div className="three-canvas-stage">
+      <div className="three-canvas" ref={root} tabIndex={0} aria-label={props.module ? '3D module and connector editor' : '3D map preview'} />
+      {shownPlacement && props.result && <div className="three-selection">{placementLabel(shownPlacement)}</div>}
+      {selectedPort && props.module && props.portPanel && <div className="port-popover" ref={popover} role="dialog" aria-label={`Port ${selectedPort}`}>
+        <div className="port-popover-head"><strong>{selectedPort}</strong>{props.onDeletePort && <button className="danger-text" onClick={() => { props.onDeletePort?.(selectedPort); setSelectedPort('') }}>Delete</button>}<button className="icon" aria-label="Close port properties" onClick={() => setSelectedPort('')}>×</button></div>
+        {props.portPanel(selectedPort, setSelectedPort)}
+      </div>}
+    </div>
     <div className="three-canvas-help">Drag to orbit · Right-drag to pan · Wheel to zoom · Double-click to focus · F focuses the {props.module ? 'hovered port' : 'hovered module'}{props.module ? ' · Drag a port along a side face' : ''}</div>
-    {shownPlacement && props.result && <div className="three-selection">{placementLabel(shownPlacement)}</div>}
-    {selectedPort && props.module && props.portPanel && <div className="port-popover" ref={popover} role="dialog" aria-label={`Port ${selectedPort}`}>
-      <div className="port-popover-head"><strong>{selectedPort}</strong>{props.onDeletePort && <button className="danger-text" onClick={() => { props.onDeletePort?.(selectedPort); setSelectedPort('') }}>Delete</button>}<button className="icon" aria-label="Close port properties" onClick={() => setSelectedPort('')}>×</button></div>
-      {props.portPanel(selectedPort, setSelectedPort)}
-    </div>}
   </div>
 }
