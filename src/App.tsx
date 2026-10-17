@@ -20,6 +20,7 @@ const uniqueId = (existing: string[], prefix: string) => { let i = 1; while (exi
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error)
 const LIBRARY_DRAG = 'application/x-dungeon-library-model'
 type LibraryInfo = Bounds | { error: string }
+type PanelPhase = 'idle' | 'out' | 'in'
 const footprint = (b: Bounds) => `${meters(b.maxX - b.minX)} × ${meters(b.maxY - b.minY)} × ${meters(b.maxZ - b.minZ)} m`
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="field"><span>{label}</span>{children}</label> }
@@ -192,7 +193,23 @@ export default function App() {
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
   })
-  // Every detail view opens in the one docked inspector panel; opening another replaces it.
+  // The inspector renders `shownPanel`, which trails `editor.panel` when switching between items so the old view can fade out before the new one fades in.
+  const [shownPanel, setShownPanel] = useState<PanelRef | null>(editor.panel)
+  const [panelPhase, setPanelPhase] = useState<PanelPhase>('idle')
+  const panelTimers = useRef<number[]>([])
+  const panelKey = editor.panel ? `${editor.panel.kind}:${editor.panel.id}` : ''
+  const panelExists = (ref: PanelRef) => ref.kind === 'create-type' || (ref.kind === 'type' ? project.types : project.modules).some(item => item.id === ref.id)
+  useEffect(() => {
+    panelTimers.current.forEach(timer => window.clearTimeout(timer)); panelTimers.current = []
+    const next = editor.panel
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    // Opening, closing, renames (the shown item no longer exists) and reduced motion switch at once.
+    if (!next || !shownPanel || (shownPanel.kind === next.kind && shownPanel.id === next.id) || !panelExists(shownPanel) || reduceMotion) { setShownPanel(next); setPanelPhase('idle'); return }
+    setPanelPhase('out')
+    panelTimers.current.push(window.setTimeout(() => { setShownPanel(next); setPanelPhase('in') }, 120), window.setTimeout(() => setPanelPhase('idle'), 120 + 220))
+  }, [panelKey])
+  useEffect(() => () => panelTimers.current.forEach(timer => window.clearTimeout(timer)), [])
+  // Every detail view opens in the one inspector panel; opening another replaces it.
   const openPanel = (kind: PanelRef['kind'], id: string) => { setEditor(current => ({ ...current, panel: { kind, id } })); setGraphMenu(null) }
   const closePanel = () => setEditor(current => current.panel ? { ...current, panel: null } : current)
   const closePanelFor = (kind: PanelRef['kind'], id: string) => setEditor(current => current.panel?.kind === kind && current.panel.id === id ? { ...current, panel: null } : current)
@@ -389,7 +406,8 @@ export default function App() {
   const graphRect = graphRef.current?.getBoundingClientRect()
   const previewPoint = previewNode && graphRect ? flowRef.current?.flowToScreenPosition({ x: previewNode.position.x + (previewNode.measured?.width ?? 370) / 2, y: previewNode.position.y + (previewNode.measured?.height ?? 340) / 2 }) : null
 
-  const panel = editor.panel
+  // Closing is immediate, and a renamed or removed item falls back to the current panel so the card never blanks for a frame.
+  const panel = !editor.panel ? null : shownPanel && panelExists(shownPanel) ? shownPanel : editor.panel
   const panelType = panel?.kind === 'type' ? project.types.find(value => value.id === panel.id) : undefined
   const panelModule = panel?.kind === 'module' ? project.modules.find(value => value.id === panel.id) : undefined
   const panelOpen = panel?.kind === 'create-type' || !!panelType || !!panelModule
@@ -430,7 +448,7 @@ export default function App() {
       {graphMenu.kind === 'node' && <><button role="menuitem" onClick={() => openType(graphMenu.id!)}>Edit</button><button role="menuitem" onClick={() => { setConnectSource(graphMenu.id!); setPointer({ x: graphMenu.x, y: graphMenu.y }); setGraphMenu(null) }}>New connection</button><button role="menuitem" className="danger-text" onClick={() => removeType(graphMenu.id!)}>Delete type</button></>}
       {graphMenu.kind === 'edge' && <><button role="menuitem" onClick={() => openRelation(graphMenu.id!)}>Edit weights</button><button role="menuitem" className="danger-text" onClick={() => { mutate(d => { d.connections = d.connections.filter(c => relationKey(c.from, c.to) !== graphMenu.id) }); setGraphMenu(null); setActiveRelationKey('') }}>Delete connection</button></>}
     </div></>}
-    {panel?.kind === 'create-type' && <InspectorPanel key="create-type" kind="New type" title="" onClose={closePanel}>
+    {panel?.kind === 'create-type' && <InspectorPanel key="inspector" phase={panelPhase} kind="New type" title="" onClose={closePanel}>
         <Field label="Type ID"><input autoFocus placeholder="e.g. corridor" value={newTypeId} onChange={e => setNewTypeId(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addType() }} /></Field>
         <p className="hint">Start with a letter; use letters, numbers, _ or -. The ID is kept exactly as typed.</p>
         <button className="primary full-width" onClick={addType}>Create type</button>
@@ -439,7 +457,7 @@ export default function App() {
         const t = panelType
         const connections = project.connections.filter(c => c.from === t.id || c.to === t.id)
         const selectedRelation = connections.find(c => relationKey(c.from, c.to) === activeRelationKey)
-        return <InspectorPanel key="type" kind="Type" title={t.id} onClose={closePanel}>
+        return <InspectorPanel key="inspector" phase={panelPhase} kind="Type" title={t.id} onClose={closePanel}>
           <div className="row two"><TypeIdInput type={t} project={project} onCommit={next => commitTypeId(t.id, next)} /><div className="field"><span>Color</span><div className="type-color-picker"><div className="color-swatches" role="group" aria-label="Preset type colors">{typeColorSwatches.map(color => <button key={color} type="button" className="color-swatch" style={{ backgroundColor: color }} aria-label={`Set type color ${color}`} aria-pressed={t.color.toLowerCase() === color} title={color} onClick={() => setTypeColor(t.id, color)} />)}</div><label className="custom-color"><span>Custom</span><input type="color" value={t.color} aria-label="Custom type color" onChange={e => setTypeColor(t.id, e.target.value)} /></label></div></div></div>
           {t.id === project.settings.startTypeId ? <p className="hint">Unique start type · one module per map. This type is outside the percentage allocation.</p> : <>
             <NumberField label="Share of map modules (%)" value={t.percent} min={0} max={100} step={0.1} suffix="%" onChange={n => updateType(t.id, value => { value.percent = n })} /><p className="hint">{targets[t.id] ?? 0} of {project.settings.modulesAfterStart} modules after start</p>
@@ -456,7 +474,7 @@ export default function App() {
       const m = panelModule
       const updatePort = (oldId: string, next: Port) => updateModule(m.id, draft => { const index = draft.ports.findIndex(p => p.id === oldId); if (index >= 0) draft.ports[index] = next })
       const removePort = (id: string) => updateModule(m.id, draft => { draft.ports = draft.ports.filter(p => p.id !== id) })
-      return <InspectorPanel key="module" kind="Module" title={m.id} onClose={closePanel}>
+      return <InspectorPanel key="inspector" phase={panelPhase} kind="Module" title={m.id} onClose={closePanel}>
         <p className="hint">{editor.modelNames[m.id] ? `Model file: ${editor.modelNames[m.id]}` : 'No FBX loaded. Bounds remain editable.'}</p><div className="section-head"><h3>Model & footprint</h3><button className="danger-text" onClick={() => removeModule(m.id)}>Delete module</button></div>
         <div className="fbx-drop" onDragOver={e => e.preventDefault()} onDrop={e => dropFbx(e, { kind: 'replace', moduleId: m.id })}><strong>Replace model</strong><span className="hint">Drop an FBX or a Models row here. The module is renamed to the new model's ID and its ports are kept.</span><div className="fbx-drop-actions"><button onClick={() => chooseFbx({ kind: 'replace', moduleId: m.id })}>Choose FBX</button>{library.size > 0 && <select aria-label="Replace from Models" value="" onChange={e => { if (e.target.value) void assignFromLibrary(e.target.value, { kind: 'replace', moduleId: m.id }) }}><option value="">From Models…</option>{[...library.keys()].map(name => <option key={name} value={name}>{libraryId(name)}</option>)}</select>}</div></div>
         <Field label="Type"><select value={m.typeId} onChange={e => updateModule(m.id, draft => { draft.typeId = e.target.value })}>{project.types.map(t => <option key={t.id} value={t.id}>{t.id}</option>)}</select></Field>

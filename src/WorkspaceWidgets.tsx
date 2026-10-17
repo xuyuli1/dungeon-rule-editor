@@ -12,9 +12,10 @@ export function ModuleSlot({ module, selected }: { module: Module; selected: boo
   </div>
 }
 // The docked panel on the right that shows one type, module or new-type view at a time. `title` is a user ID and is shown as typed.
-export function InspectorPanel({ kind, title, onClose, children }: { kind: string; title: string; onClose: () => void; children: React.ReactNode }) {
+// `phase` drives the switch animation: 'out' dims the old content, 'in' brings the new content back.
+export function InspectorPanel({ kind, title, phase = 'idle', onClose, children }: { kind: string; title: string; phase?: 'idle' | 'out' | 'in'; onClose: () => void; children: React.ReactNode }) {
   const label = title ? `${kind} ${title}` : kind
-  return <aside className="inspector" aria-label={label}>
+  return <aside className={`inspector ${phase === 'idle' ? '' : `inspector--${phase}`}`} aria-label={label} aria-busy={phase === 'out'}>
     <header className="inspector-head"><div><span className="inspector-kind">{kind}</span>{title && <strong className="inspector-title">{title}</strong>}</div><button className="icon" aria-label={`Close ${label}`} title="Close (Esc)" onClick={onClose}>×</button></header>
     <div className="inspector-body">{children}</div>
   </aside>
