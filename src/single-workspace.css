@@ -145,8 +145,14 @@ input.default-value:not(:focus) { color: #899ba0; }
 .floating-body .list-item { justify-content: space-between; margin-bottom: 4px; }
 .window-resize { position: absolute; right: 0; bottom: 0; width: 22px; height: 22px; cursor: nwse-resize; touch-action: none; background: linear-gradient(135deg, transparent 50%, #8da4aa 52%, #8da4aa 57%, transparent 59%); }
 .port-editor { margin: 10px 0; padding: 12px; border: 1px solid #425961; background: #182c35; }
-.port-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.port-editor:not([open]) { margin: 6px 0; padding: 8px 12px; }
+.port-editor-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; cursor: pointer; list-style: none; }
+.port-editor:not([open]) > .port-editor-head { margin-bottom: 0; }
+.port-editor-head::-webkit-details-marker { display: none; }
+.port-editor-head::before { content: '▸'; color: #adc2c3; font-size: 11px; transition: transform .15s; }
+.port-editor[open] > .port-editor-head::before { transform: rotate(90deg); }
 .port-editor-head span { color: #adc2c3; font: 10px var(--mono); }
+.port-editor-head .port-editor-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8da4aa; }
 .port-editor .row.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .port-editor .field input { min-width: 0; }
 .port-editor select[multiple] { height: auto; min-height: 60px; }
