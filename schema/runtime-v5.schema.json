@@ -73,7 +73,9 @@
       "required": [
         "id",
         "percent",
-        "requiredMin"
+        "requiredMin",
+        "preferFar",
+        "preferHigh"
       ],
       "properties": {
         "id": {
@@ -87,6 +89,18 @@
         "requiredMin": {
           "type": "integer",
           "minimum": 0
+        },
+        "preferFar": {
+          "type": "number",
+          "minimum": -100,
+          "maximum": 100,
+          "description": "Soft placement preference in percent (0 = off). Positive values favour candidates further from the start: 100 = 4x per step from the start, 50 = 2x, negative values favour nearer ones. It only reorders legal candidates: per type and step the factors are normalised to a mean of 1, so the type competes as strongly as before."
+        },
+        "preferHigh": {
+          "type": "number",
+          "minimum": -100,
+          "maximum": 100,
+          "description": "Soft placement preference in percent (0 = off). Positive values favour higher floors (world base height): 100 = 4x per 3 m, 50 = 2x, negative values favour lower floors. It only reorders legal candidates: per type and step the factors are normalised to a mean of 1, so the type competes as strongly as before."
         }
       }
     },

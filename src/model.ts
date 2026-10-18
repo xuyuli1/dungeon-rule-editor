@@ -6,11 +6,16 @@ export type Bounds = { minX: number; maxX: number; minY: number; maxY: number; m
 export type Port = { id: string; edge: Edge; doorTypeId: string; x: number; y: number; z: number; allowedTypeIds: string[] | null }
 // A door opening size in millimetres. Sizes are unique per project (more than DOOR_MATCH_TOLERANCE apart).
 export type DoorType = { id: string; width: number; height: number }
+// `preferFar` and `preferHigh` are soft placement preferences in percent (−100 to 100, 0 = off): positive values pull this
+// type away from the start (in steps) or up to higher floors, negative values pull it near or low. They only reorder
+// legal candidates; they never block a placement.
 export type ModuleType = {
   id: string
   color: string
   percent: number
   requiredMin: number
+  preferFar: number
+  preferHigh: number
 }
 // `reservedAbove` keeps space empty above the box: 0 = none, a number = that many millimetres, null = open to the sky.
 // Side faces extend up through it (door centres may sit there), and the generator treats it as occupied.
@@ -45,6 +50,11 @@ export function normalizeEditor(value: unknown): EditorState {
 }
 // Door sizes within this many millimetres count as the same door type when importing.
 export const DOOR_MATCH_TOLERANCE = 20
+// A preference of 100 % makes a candidate 4× as likely to be tried first for every step further from the start
+// (preferFar) or every 3 m of floor height, about one floor (preferHigh); 50 % gives 2×, negative values invert it.
+export const PREFER_STEP_SCALE = 1, PREFER_HEIGHT_SCALE = 3000
+export const preferenceFactor = (type: Pick<ModuleType, 'preferFar' | 'preferHigh'> | undefined, steps: number, floorY: number) =>
+  type ? 2 ** ((type.preferFar / 50) * (steps / PREFER_STEP_SCALE) + (type.preferHigh / 50) * (floorY / PREFER_HEIGHT_SCALE)) : 1
 export const faceTop = (module: Pick<Module, 'bounds' | 'reservedAbove'>) => module.reservedAbove === null ? Infinity : module.bounds.maxY + module.reservedAbove
 export const occupiedBounds = (module: Pick<Module, 'bounds' | 'reservedAbove'>): Bounds => ({ ...module.bounds, maxY: faceTop(module) })
 export const doorTypeFor = (project: Pick<RuntimeProject, 'doorTypes'>, port: Pick<Port, 'doorTypeId'>) => project.doorTypes.find(door => door.id === port.doorTypeId)
@@ -97,6 +107,7 @@ export function validateProject(project: RuntimeProject): string[] {
     if (!/^#[0-9a-fA-F]{6}$/.test(type.color)) errors.push(`Type ${type.id} has an invalid color`)
     if (!finite(type.percent) || type.percent < 0 || type.percent > 100) errors.push(`Type ${type.id} share must be 0–100%`)
     if (!integer(type.requiredMin) || type.requiredMin < 0) errors.push(`Type ${type.id} has an invalid required minimum`)
+    for (const [key, label] of [['preferFar', 'distance'], ['preferHigh', 'height']] as const) if (!finite(type[key]) || type[key] < -100 || type[key] > 100) errors.push(`Type ${type.id} ${label} preference must be −100% to 100%`)
   }
   if (Math.abs(project.types.filter(t => t.id !== startTypeId).reduce((sum, t) => sum + t.percent, 0) - 100) > 0.000001) errors.push('Non-start type shares must total 100%')
   if (!typeIds.has(startTypeId)) errors.push('Select a valid start type')
@@ -153,6 +164,7 @@ export function parseRuntime(value: unknown): RuntimeProject {
   for (const door of project.doorTypes) if (!object(door) || typeof door.id !== 'string' || typeof door.width !== 'number' || typeof door.height !== 'number') throw new Error('Invalid door type data')
   for (const [index, t] of project.types.entries()) {
     if (!object(t) || typeof t.id !== 'string' || typeof t.percent !== 'number' || typeof t.requiredMin !== 'number') throw new Error('Invalid type data')
+    for (const key of ['preferFar', 'preferHigh'] as const) { if (t[key] === undefined) t[key] = 0; else if (typeof t[key] !== 'number') throw new Error('Invalid type data') }
     if (typeof t.color !== 'string') t.color = ['#65b9d4', '#c987f0', '#efb565', '#83caa0', '#d58a9b'][index % 5]
   }
   for (const m of project.modules) {
@@ -171,14 +183,14 @@ export function exportRules(project: RuntimeProject): ExportedRules {
     schemaVersion: project.schemaVersion,
     settings: { ...project.settings },
     doorTypes: structuredClone(project.doorTypes),
-    types: project.types.map(({ id, percent, requiredMin }) => ({ id, percent, requiredMin })),
+    types: project.types.map(({ id, percent, requiredMin, preferFar, preferHigh }) => ({ id, percent, requiredMin, preferFar, preferHigh })),
     modules: structuredClone(project.modules),
     connections: structuredClone(project.connections),
   }
 }
 
 export function exampleProject(): RuntimeProject {
-  const type = (id: string, color: string, percent: number, requiredMin: number): ModuleType => ({ id, color, percent, requiredMin })
+  const type = (id: string, color: string, percent: number, requiredMin: number): ModuleType => ({ id, color, percent, requiredMin, preferFar: 0, preferHigh: 0 })
   const bounds = { minX: -4000, maxX: 4000, minY: 0, maxY: 3000, minZ: -4000, maxZ: 4000 }
   const door = 'Door_100x100'
   const ports = (): Port[] => [{ id: 'north', edge: 'N', doorTypeId: door, x: 0, y: 1500, z: 4000, allowedTypeIds: null }, { id: 'east', edge: 'E', doorTypeId: door, x: 4000, y: 1500, z: 0, allowedTypeIds: null }, { id: 'south', edge: 'S', doorTypeId: door, x: 0, y: 1500, z: -4000, allowedTypeIds: null }, { id: 'west', edge: 'W', doorTypeId: door, x: -4000, y: 1500, z: 0, allowedTypeIds: null }]

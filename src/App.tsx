@@ -243,7 +243,7 @@ export default function App() {
     const id = newTypeId.trim()
     if (!isId(id) || project.types.some(t => t.id === id)) { setNotice('Enter a unique type ID. Start with a letter; use letters, numbers, _ or -.'); return }
     const color = nextTypeColor(project.types.map(type => type.color))
-    mutate(draft => { draft.types.push({ id, color, percent: 0, requiredMin: 0 }); if (!draft.settings.startTypeId) draft.settings.startTypeId = id })
+    mutate(draft => { draft.types.push({ id, color, percent: 0, requiredMin: 0, preferFar: 0, preferHigh: 0 }); if (!draft.settings.startTypeId) draft.settings.startTypeId = id })
     if (createPosition) setEditor(current => ({ ...current, graphPositions: { ...current.graphPositions, [id]: createPosition } }))
     openType(id); setPendingNodeFocus(id); setNewTypeId(''); setCreatePosition(null)
   }
@@ -480,6 +480,11 @@ export default function App() {
           {t.id === project.settings.startTypeId ? <p className="hint">Unique start type · one module per map. This type is outside the percentage allocation.</p> : <>
             <NumberField label="Share of map modules (%)" value={t.percent} min={0} max={100} step={0.1} suffix="%" onChange={n => updateType(t.id, value => { value.percent = n })} /><p className="hint">{targets[t.id] ?? 0} of {project.settings.modulesAfterStart} modules after start</p>
             <NumberField label="Required minimum" value={t.requiredMin} min={0} defaultValue={0} onChange={n => updateType(t.id, value => { value.requiredMin = n })} /><p className="hint">Included in the target above.</p>
+            <section className="subsection preferences"><h3>Placement preferences</h3>
+              <p className="hint">Soft tendencies: they change which legal placement is tried first, never whether one is allowed.</p>
+              <PreferenceField label="Distance from start" low="Near" high="Far" value={t.preferFar} onChange={n => updateType(t.id, value => { value.preferFar = n })} />
+              <PreferenceField label="Floor height" low="Low" high="High" value={t.preferHigh} onChange={n => updateType(t.id, value => { value.preferHigh = n })} />
+            </section>
           </>}
           <section className="subsection"><div className="section-head"><h3>Directed connections</h3><button className="quiet" onClick={() => { setConnectSource(t.id); closePanel() }}>New connection</button></div>
             {connections.map(c => <button className={activeRelationKey === relationKey(c.from, c.to) ? 'list-item selected' : 'list-item'} key={relationKey(c.from, c.to)} onClick={() => setActiveRelationKey(relationKey(c.from, c.to))}>{c.from} → {c.to}<small>Weight {c.weight}</small></button>)}
@@ -537,6 +542,14 @@ function LibraryRow({ name, info, project, openTop, onOpenTop, onAssign, onRemov
     <label className="library-sky" title="Keep everything above this module empty; its side faces extend upward so doors may sit above the body's top"><input type="checkbox" checked={openTop} onChange={e => onOpenTop(e.target.checked)} />Open to sky</label>
     <button className="primary" disabled={!ready} title={typeExists ? undefined : 'Creates this type'} onClick={() => onAssign(typeId)}>Assign</button>
     <button className="icon danger" aria-label={`Remove ${name} from Models`} onClick={onRemove}>×</button>
+  </div>
+}
+// A soft preference in percent (−100 to 100) with five presets; 0 is off.
+function PreferenceField({ label, low, high, value, onChange }: { label: string; low: string; high: string; value: number; onChange: (n: number) => void }) {
+  const presets: [number, string][] = [[-100, `Strongly ${low.toLowerCase()}`], [-50, low], [0, 'Off'], [50, high], [100, `Strongly ${high.toLowerCase()}`]]
+  return <div className="preference">
+    <NumberField label={`${label} (%)`} value={value} min={-100} max={100} step={1} suffix="%" defaultValue={0} onChange={onChange} />
+    <div className="preference-presets" role="group" aria-label={`${label} presets`}>{presets.map(([n, text]) => <button key={n} type="button" className={value === n ? 'primary' : 'quiet'} aria-pressed={value === n} onClick={() => onChange(n)}>{text}</button>)}</div>
   </div>
 }
 // Space kept empty above a module: Normal (0), Open to sky (null) or a custom height. Door centres may sit in this space.

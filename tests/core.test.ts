@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import JSZip from 'jszip'
-import { emptyEditor, emptyProject, exampleProject, exportRules, normalizeEditor, occupiedBounds, parseRuntime, typeTargets, validateProject, type Bounds, type RuntimeProject } from '../src/model'
+import { emptyEditor, emptyProject, exampleProject, exportRules, normalizeEditor, occupiedBounds, parseRuntime, preferenceFactor, typeTargets, validateProject, type Bounds, type RuntimeProject } from '../src/model'
 import { generate, overlaps, previewDoors, rotatedBounds, rotate } from '../src/generator'
 import { nearestValidPort, portAtBoundary, portsFromDoorMarkers, remapPorts } from '../src/geometry'
 import { buildProjectZip, fbxMetersPerUnit, fbxModelNames, openProject, type FbxAnalysis } from '../src/io'
@@ -52,9 +52,9 @@ describe('v5 map rules', () => {
     const project = exampleProject()
     project.settings.modulesAfterStart = 2
     project.types = [
-      { id: 'start', color: '#ffffff', percent: 0, requiredMin: 0 },
-      { id: 'stair', color: '#ff8800', percent: 50, requiredMin: 1 },
-      { id: 'room', color: '#00aaff', percent: 50, requiredMin: 1 },
+      { id: 'start', color: '#ffffff', percent: 0, requiredMin: 0, preferFar: 0, preferHigh: 0 },
+      { id: 'stair', color: '#ff8800', percent: 50, requiredMin: 1, preferFar: 0, preferHigh: 0 },
+      { id: 'room', color: '#00aaff', percent: 50, requiredMin: 1, preferFar: 0, preferHigh: 0 },
     ]
     project.settings.startTypeId = 'start'
     const [start, stair, room] = project.modules.slice(0, 3).map(module => structuredClone(module))
@@ -139,7 +139,7 @@ describe('v5 map rules', () => {
     project.doorTypes.pop()
     project.modules[0].ports[0].doorTypeId = 'missing'
     expect(validateProject(project).some(error => error.includes('needs a valid door type'))).toBe(true)
-    expect(validateProject({ ...emptyProject(), types: [{ id: 'a', color: '#ffffff', percent: 0, requiredMin: 0 }], settings: { modulesAfterStart: 1, startTypeId: 'a' } }).some(error => error.includes('door type'))).toBe(false)
+    expect(validateProject({ ...emptyProject(), types: [{ id: 'a', color: '#ffffff', percent: 0, requiredMin: 0, preferFar: 0, preferHigh: 0 }], settings: { modulesAfterStart: 1, startTypeId: 'a' } }).some(error => error.includes('door type'))).toBe(false)
   })
   it('turns door meshes into ports on the face their centre lies on', () => {
     const doors = [
@@ -253,6 +253,36 @@ describe('v5 map rules', () => {
       const overHead = box.minY >= startBox.maxY && box.minX < startBox.maxX && box.maxX > startBox.minX && box.minZ < startBox.maxZ && box.maxZ > startBox.minZ
       expect(overHead).toBe(false)
     }
+  })
+  it('weights candidates by distance and height preferences', () => {
+    expect(preferenceFactor({ preferFar: 100, preferHigh: 0 }, 1, 0)).toBeCloseTo(4)
+    expect(preferenceFactor({ preferFar: 50, preferHigh: 0 }, 1, 0)).toBeCloseTo(2)
+    expect(preferenceFactor({ preferFar: -50, preferHigh: 0 }, 1, 0)).toBeCloseTo(.5)
+    expect(preferenceFactor({ preferFar: 0, preferHigh: 100 }, 0, 3000)).toBeCloseTo(4)
+    expect(preferenceFactor({ preferFar: 0, preferHigh: 0 }, 9, 9000)).toBe(1)
+    const averageSteps = (preferFar: number) => {
+      const project = exampleProject()
+      project.settings.modulesAfterStart = 20
+      project.types[1].percent = 80; project.types[2].percent = 20
+      project.types[2].preferFar = preferFar
+      expect(validateProject(project)).toEqual([])
+      const depths: number[] = []
+      for (let seed = 1; seed <= 12; seed++) {
+        const placements = generate(project, seed).placements
+        const depth = new Map<string, number>([['p0', 0]])
+        for (const p of placements) if (p.parent) depth.set(p.instanceId, depth.get(p.parent.instanceId)! + 1)
+        placements.filter(p => p.typeId === 'special').forEach(p => depths.push(depth.get(p.instanceId)!))
+      }
+      return depths.reduce((a, b) => a + b, 0) / depths.length
+    }
+    const far = averageSteps(100), off = averageSteps(0), near = averageSteps(-100)
+    expect(far).toBeGreaterThan(off + .5)
+    expect(off).toBeGreaterThan(near + .5)
+    const project = exampleProject(); project.types[2].preferFar = 150
+    expect(validateProject(project).some(error => error.includes('distance preference'))).toBe(true)
+    const exported = JSON.parse(JSON.stringify(exportRules(exampleProject())))
+    delete exported.types[1].preferFar
+    expect(parseRuntime(exported).types[1].preferFar).toBe(0)
   })
   it('tidies the graph layout without undoing where nodes were moved', () => {
     const node = (id: string, x: number, y: number) => ({ id, x, y, width: 370, height: 220 })

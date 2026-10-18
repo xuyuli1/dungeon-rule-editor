@@ -169,3 +169,9 @@ input, select { font-size: var(--fs-sm); }
 .reserved-above-inputs { display: grid; gap: 6px; }
 .reserved-above-inputs .field { margin: 0; }
 .metric-note { display: block; margin-top: 4px; color: var(--muted); font-size: var(--fs-xs); }
+
+/* Placement preferences in the type panel: a percentage field plus five preset buttons. */
+.preferences .preference { margin-bottom: 12px; }
+.preferences .preference .field { margin-bottom: 6px; }
+.preference-presets { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
+.preference-presets button { padding: 5px 4px; font-size: 11px; border-color: var(--border); }

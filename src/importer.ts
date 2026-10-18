@@ -33,7 +33,7 @@ export function applyImports(project: RuntimeProject, requests: ImportRequest[])
     else if (reservedAbove > 0) notes.push(`${reservedAbove / 1000} m reserved above`)
     if (target.kind === 'new') {
       if (!next.types.some(t => t.id === target.typeId)) {
-        next.types.push({ id: target.typeId, color: nextTypeColor(next.types.map(t => t.color)), percent: 0, requiredMin: 0 })
+        next.types.push({ id: target.typeId, color: nextTypeColor(next.types.map(t => t.color)), percent: 0, requiredMin: 0, preferFar: 0, preferHigh: 0 })
         notes.push(`new type ${target.typeId}`)
       }
       next.modules.push({ id, typeId: target.typeId, bounds: analysis.bounds, reservedAbove, ports: doors.ports })

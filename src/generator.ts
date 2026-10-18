@@ -1,9 +1,9 @@
-import { compareId, doorTypeFor, occupiedBounds, type Bounds, type Edge, type Module, type Point, type RuntimeProject, type Port, typeTargets, validateProject, weightFor } from './model'
+import { compareId, doorTypeFor, occupiedBounds, preferenceFactor, type Bounds, type Edge, type Module, type Point, type RuntimeProject, type Port, typeTargets, validateProject, weightFor } from './model'
 
 export type Placement = { instanceId: string; moduleId: string; typeId: string; x: number; y: number; z: number; rotation: 0 | 1 | 2 | 3; parent?: { instanceId: string; parentPortId: string; ownPortId: string } }
 export type PreviewDoor = { instanceId: string; portId: string; connected: boolean; edge: Edge; x: number; y: number; z: number; width: number; height: number }
 export type PreviewResult = { placements: Placement[]; complete: boolean; seed: number; checks: number; restarts: number; targets: Record<string, number>; warnings: string[] }
-type Candidate = { parentIndex: number; parentPort: Port; child: Module; childPort: Port; rotation: 0 | 1 | 2 | 3; x: number; y: number; z: number; rank: number }
+type Candidate = { parentIndex: number; parentPort: Port; child: Module; childPort: Port; rotation: 0 | 1 | 2 | 3; x: number; y: number; z: number; weight: number; preference: number; rank: number }
 type Progress = (result: PreviewResult) => void
 
 export class XorShift32 {
@@ -76,6 +76,7 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
   const targets = typeTargets(project)
   const finalTotal = project.settings.modulesAfterStart + 1
   const moduleById = new Map(project.modules.map(m => [m.id, m]))
+  const typeById = new Map(project.types.map(t => [t.id, t]))
   const modulesByType = new Map(project.types.map(t => [t.id, project.modules.filter(m => m.typeId === t.id).sort((a, b) => compareId(a.id, b.id))]))
   const typeIds = project.types.map(t => t.id).sort()
   let checks = 0
@@ -128,6 +129,7 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
     bag.set(rootId, bag.get(rootId)! - 1)
     const rootModule = moduleById.get(rootId)!
     const placements: Placement[] = [{ instanceId: 'p0', moduleId: rootId, typeId: rootModule.typeId, x: 0, y: 0, z: 0, rotation: 0 }]
+    const steps: number[] = [0] // Steps from the start for each placement, used by distance preferences.
     const used = new Set<string>()
     updateBest(placements)
 
@@ -157,17 +159,24 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
               const x = worldPoint.x - offset.x, y = worldPoint.y - childPort.y, z = worldPoint.z - offset.z
               const bounds = rotatedBounds(occupiedBounds(child), rotation, x, y, z)
               if (placements.some(p => overlaps(bounds, rotatedBounds(occupiedBounds(moduleById.get(p.moduleId)!), p.rotation, p.x, p.y, p.z)))) continue
-              candidates.push({ parentIndex: pi, parentPort, child, childPort, rotation, x, y, z, rank: weightedRank(weight * count) })
+              const preference = preferenceFactor(typeById.get(child.typeId), steps[pi] + 1, y + child.bounds.minY)
+              candidates.push({ parentIndex: pi, parentPort, child, childPort, rotation, x, y, z, weight: weight * count, preference, rank: 0 })
             }
           }
         }
       }
+      // Preferences are normalised per type at each step (mean factor 1), so they move a type towards far/near or high/low
+      // candidates without changing how strongly it competes with other types. Ranks are drawn in candidate order.
+      const preferenceSum = new Map<string, { sum: number; count: number }>()
+      for (const c of candidates) { const s = preferenceSum.get(c.child.typeId) ?? { sum: 0, count: 0 }; s.sum += c.preference; s.count++; preferenceSum.set(c.child.typeId, s) }
+      for (const c of candidates) { const s = preferenceSum.get(c.child.typeId)!; c.rank = weightedRank(c.weight * c.preference / (s.sum / s.count)) }
       candidates.sort((a, b) => a.rank - b.rank || a.parentIndex - b.parentIndex || compareId(a.child.id, b.child.id) || compareId(a.childPort.id, b.childPort.id) || a.rotation - b.rotation)
       for (const c of candidates.slice(0, 96)) {
         if (checks >= maxChecks) return false
         if ((bag.get(c.child.id) ?? 0) <= 0 || used.has(usedKey(c.parentIndex, c.parentPort.id))) continue
         const index = placements.length
         const parent = placements[c.parentIndex]
+        steps.push(steps[c.parentIndex] + 1)
         placements.push({ instanceId: `p${index}`, moduleId: c.child.id, typeId: c.child.typeId, x: c.x, y: c.y, z: c.z, rotation: c.rotation, parent: { instanceId: parent.instanceId, parentPortId: c.parentPort.id, ownPortId: c.childPort.id } })
         bag.set(c.child.id, bag.get(c.child.id)! - 1)
         used.add(usedKey(c.parentIndex, c.parentPort.id))
@@ -178,6 +187,7 @@ export function generate(project: RuntimeProject, seed: number, onProgress?: Pro
         used.delete(usedKey(index, c.childPort.id))
         bag.set(c.child.id, bag.get(c.child.id)! + 1)
         placements.pop()
+        steps.pop()
       }
       return false
     }
