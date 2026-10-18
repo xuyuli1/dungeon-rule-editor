@@ -69,6 +69,11 @@ export function overlaps(a: Bounds, b: Bounds): boolean {
 const normal = (edge: Edge): Point => edge === 'N' ? { x: 0, z: 1 } : edge === 'E' ? { x: 1, z: 0 } : edge === 'S' ? { x: 0, z: -1 } : { x: -1, z: 0 }
 const usedKey = (index: number, portId: string) => `${index}\u0000${portId}`
 export const portAllows = (port: Port, targetTypeId: string) => port.allowedTypeIds === null || port.allowedTypeIds.includes(targetTypeId)
+// The search budget for a time limit: 12,000 candidate checks and 2.4 restarts per second (at least 24), so 10 s gives the
+// original 120,000 checks and 24 restarts and a longer limit actually searches further.
+export function searchBudget(seconds: number): { maxChecks: number; maxRestarts: number } {
+  return { maxChecks: Math.round(12000 * seconds), maxRestarts: Math.max(24, Math.round(2.4 * seconds)) }
+}
 export function generate(project: RuntimeProject, seed: number, onProgress?: Progress, maxChecks = 120000, maxRestarts = 24): PreviewResult {
   const errors = validateProject(project)
   if (errors.length) throw new Error(errors.join('\n'))

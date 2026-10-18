@@ -175,3 +175,9 @@ input, select { font-size: var(--fs-sm); }
 .preferences .preference .field { margin-bottom: 6px; }
 .preference-presets { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
 .preference-presets button { padding: 5px 4px; font-size: 11px; border-color: var(--border); }
+
+/* File menu setting: search time limit. */
+.menu-setting { padding: 10px 9px 4px; border-bottom: 1px solid #3b4c54; }
+.menu-setting .field { margin-bottom: 4px; }
+.menu-setting small { display: block; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.menu-setting .input-unit input { flex: 1; width: 0; min-width: 0; }

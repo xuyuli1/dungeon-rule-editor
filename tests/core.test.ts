@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import JSZip from 'jszip'
 import { emptyEditor, emptyProject, exampleProject, exportRules, normalizeEditor, occupiedBounds, parseRuntime, preferenceFactor, typeTargets, validateProject, type Bounds, type RuntimeProject } from '../src/model'
-import { generate, overlaps, previewDoors, rotatedBounds, rotate } from '../src/generator'
+import { generate, overlaps, previewDoors, rotatedBounds, rotate, searchBudget } from '../src/generator'
 import { nearestValidPort, portAtBoundary, portsFromDoorMarkers, remapPorts } from '../src/geometry'
 import { buildProjectZip, fbxMetersPerUnit, fbxModelNames, openProject, type FbxAnalysis } from '../src/io'
 import { applyImports } from '../src/importer'
@@ -83,6 +83,11 @@ describe('v5 map rules', () => {
       const qb = rotatedBounds(project.modules.find(m => m.id === q.moduleId)!.bounds, q.rotation, q.x, q.y, q.z)
       expect(overlaps(pb, qb)).toBe(false)
     }
+  })
+  it('scales the search budget with the time limit', () => {
+    expect(searchBudget(10)).toEqual({ maxChecks: 120000, maxRestarts: 24 })
+    expect(searchBudget(30)).toEqual({ maxChecks: 360000, maxRestarts: 72 })
+    expect(searchBudget(5)).toEqual({ maxChecks: 60000, maxRestarts: 24 })
   })
   it('finishes a 50-module sample within the search budget', () => {
     const project = exampleProject(); project.settings.modulesAfterStart = 49

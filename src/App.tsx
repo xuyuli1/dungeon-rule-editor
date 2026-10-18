@@ -8,6 +8,7 @@ import { type PreviewResult } from './generator'
 import { portAtBoundary, portsFromDoorMarkers } from './geometry'
 import { applyImports, type ImportRequest } from './importer'
 import { tidyLayout } from './layout'
+import { SEARCH_SECONDS_MAX, SEARCH_SECONDS_MIN, getSearchSeconds, setSearchSeconds, useSearchSeconds } from './searchSettings'
 import { InspectorPanel, ModuleSlot } from './WorkspaceWidgets'
 import { ThreeCanvas } from './ThreeCanvas'
 import { clearDraft, loadDraft, saveDraft } from './autosave'
@@ -129,7 +130,8 @@ export default function App() {
   const [preview, setPreview] = useState<PreviewResult | null>(null)
   const [generating, setGenerating] = useState(false)
   const [notice, setNotice] = useState('')
-  const noticeIsError = /failed|error|invalid|resolve|enter a|shorter|thinner|already exists|no complete|10-second|stopped/i.test(notice)
+  const noticeIsError = /failed|error|invalid|resolve|enter a|shorter|thinner|already exists|no complete|second limit|stopped/i.test(notice)
+  const searchSeconds = useSearchSeconds()
   const workerRef = useRef<Worker | null>(null)
   const timeoutRef = useRef<number | null>(null)
   const projectInput = useRef<HTMLInputElement>(null)
@@ -402,8 +404,10 @@ export default function App() {
       if (message.kind === 'error') { setNotice(message.message ?? 'Generation failed'); stopWorker() }
     }
     worker.onerror = event => { if (workerRef.current !== worker) return; setNotice(event.message || 'Preview worker failed'); stopWorker() }
-    worker.postMessage({ project, seed: seed >>> 0 })
-    timeoutRef.current = window.setTimeout(() => { if (workerRef.current !== worker) return; setPreview(latest); setNotice('Search reached the 10-second limit. Showing the best result.'); stopWorker() }, 10000)
+    // The time limit (file menu) also sets the worker's candidate and restart budget, so a longer limit searches further.
+    const seconds = getSearchSeconds()
+    worker.postMessage({ project, seed: seed >>> 0, seconds })
+    timeoutRef.current = window.setTimeout(() => { if (workerRef.current !== worker) return; setPreview(latest); setNotice(`Search reached the ${seconds}-second limit. Showing the best result. You can raise the limit in the file menu.`); stopWorker() }, seconds * 1000)
   }
   useEffect(() => { if (hydrated && project.types.length && !errors.length) startPreview() }, [hydrated])
   const exportJson = () => {
@@ -431,7 +435,7 @@ export default function App() {
   return <div className={`app-shell ${panelOpen ? 'inspector-open' : ''}`}>
     <header className="topbar"><div className="file-menu" ref={menuRef}>
       <button className="menu-trigger" aria-label="File menu" title="File menu" aria-expanded={menuOpen} aria-controls="file-menu-panel" onClick={() => setMenuOpen(open => !open)}><span aria-hidden="true">{menuOpen ? '×' : '☰'}</span></button>
-      {menuOpen && <div id="file-menu-panel" className="menu-panel"><button onClick={() => { setMenuOpen(false); if (window.confirm('Create a new project and clear the local draft? Save ZIP first if you need a backup.')) { void saveQueue.current.then(() => clearDraft()).then(() => load(emptyProject())).catch(error => setNotice(`New project failed: ${errorText(error)}`)) } }}>New project</button><button onClick={() => { setMenuOpen(false); if (!project.types.length || window.confirm('Replace the current project with the example?')) load(exampleProject()) }}>Load example</button><button onClick={() => { setMenuOpen(false); projectInput.current?.click() }}>Open ZIP</button><button onClick={() => { setMenuOpen(false); jsonInput.current?.click() }}>Import JSON</button><button onClick={() => { setMenuOpen(false); saveProject(project, editor, files, library).then(() => setNotice('Project ZIP saved')).catch(e => setNotice(errorText(e))) }}>Save ZIP</button><button onClick={() => { setMenuOpen(false); exportJson() }}>Export JSON</button><div className="menu-meta">{project.types.length} types · {project.modules.length} modules · {library.size} in Models<br />Format v5 · 1 unit = 1 m<br />Files stay in this browser</div></div>}
+      {menuOpen && <div id="file-menu-panel" className="menu-panel"><button onClick={() => { setMenuOpen(false); if (window.confirm('Create a new project and clear the local draft? Save ZIP first if you need a backup.')) { void saveQueue.current.then(() => clearDraft()).then(() => load(emptyProject())).catch(error => setNotice(`New project failed: ${errorText(error)}`)) } }}>New project</button><button onClick={() => { setMenuOpen(false); if (!project.types.length || window.confirm('Replace the current project with the example?')) load(exampleProject()) }}>Load example</button><button onClick={() => { setMenuOpen(false); projectInput.current?.click() }}>Open ZIP</button><button onClick={() => { setMenuOpen(false); jsonInput.current?.click() }}>Import JSON</button><button onClick={() => { setMenuOpen(false); saveProject(project, editor, files, library).then(() => setNotice('Project ZIP saved')).catch(e => setNotice(errorText(e))) }}>Save ZIP</button><button onClick={() => { setMenuOpen(false); exportJson() }}>Export JSON</button><div className="menu-setting"><NumberField label="Search time limit" value={searchSeconds} min={SEARCH_SECONDS_MIN} max={SEARCH_SECONDS_MAX} step={1} suffix="s" defaultValue={30} onChange={setSearchSeconds} /><small>Longest a map search may run; longer also tries more candidates. Saved in this browser.</small></div><div className="menu-meta">{project.types.length} types · {project.modules.length} modules · {library.size} in Models<br />Format v5 · 1 unit = 1 m<br />Files stay in this browser</div></div>}
     </div><span className={`save-indicator ${saveStatus === 'Save failed' ? 'failed' : ''}`} role="status">{saveStatus}</span><input hidden type="file" accept=".zip" ref={projectInput} onChange={e => handleFile(e, 'project')} /><input hidden type="file" accept=".json" ref={jsonInput} onChange={e => handleFile(e, 'json')} /><input hidden type="file" accept=".fbx" ref={fbxInput} onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file && fbxMode.current) void importModuleFile(file, fbxMode.current) }} /><input hidden type="file" accept=".fbx" multiple ref={libraryFilesInput} onChange={e => { const picked = Array.from(e.target.files ?? []); e.target.value = ''; if (picked.length) addToLibrary(picked) }} /><input hidden type="file" multiple ref={libraryFolderInput} {...{ webkitdirectory: '' }} onChange={e => { const picked = Array.from(e.target.files ?? []); e.target.value = ''; if (picked.length) addToLibrary(picked) }} /></header>
     {notice && <div role={noticeIsError ? 'alert' : 'status'} className={`notice ${noticeIsError ? 'notice-error' : 'notice-success'}`}><span>{notice}</span><button aria-label="Dismiss notification" title="Dismiss" onClick={() => setNotice('')}>×</button></div>}
     <main className="editor-workspace">
