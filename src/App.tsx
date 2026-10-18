@@ -7,6 +7,7 @@ import { doorTypeFor, doorTypeName, faceTop, emptyEditor, emptyProject, exampleP
 import { type PreviewResult } from './generator'
 import { portAtBoundary, portsFromDoorMarkers } from './geometry'
 import { applyImports, type ImportRequest } from './importer'
+import { tidyLayout } from './layout'
 import { InspectorPanel, ModuleSlot } from './WorkspaceWidgets'
 import { ThreeCanvas } from './ThreeCanvas'
 import { clearDraft, loadDraft, saveDraft } from './autosave'
@@ -365,22 +366,14 @@ export default function App() {
   const graphColumns = Math.max(2, Math.ceil(Math.sqrt(project.types.length)))
   const graphNodes: FlowNode[] = project.types.map((t, i) => ({ id: t.id, measured: { width: 370, height: project.modules.filter(m => m.typeId === t.id).length > 1 ? 320 : 220 }, position: editor.graphPositions[t.id] ?? { x: (i % graphColumns) * 470, y: Math.floor(i / graphColumns) * 480 }, data: { label: <div className="graph-node-content" onDoubleClick={e => { e.stopPropagation(); openType(t.id) }}><div className="graph-node-title"><strong>{t.id}</strong><button className="node-more nodrag nopan" aria-label={`Actions for ${t.id}`} onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); const rect = e.currentTarget.getBoundingClientRect(); showMenu('node', rect.right, rect.bottom, t.id) }}>⋯</button></div><span>{t.id === project.settings.startTypeId ? 'Start · 1 module' : `${t.percent}% · ${targets[t.id] ?? 0} target`}</span><div className="node-modules nowheel nodrag nopan" onPointerDown={e => e.stopPropagation()}>{project.modules.filter(m => m.typeId === t.id).map(m => <button key={m.id} className="slot-button nodrag nopan" onClick={e => { e.stopPropagation(); openModule(m.id) }} onDoubleClick={e => e.stopPropagation()}><ModuleSlot module={m} selected={selectedModule === m.id} /></button>)}<button type="button" className="slot-add nodrag nopan" onClick={e => { e.stopPropagation(); chooseFbx({ kind: 'new', typeId: t.id }) }} onDragOver={e => { e.preventDefault(); e.stopPropagation() }} onDrop={e => { e.preventDefault(); e.stopPropagation(); dropFbx(e, { kind: 'new', typeId: t.id }) }}><strong>+ Add module</strong><small>Choose FBX or drop from Models</small></button></div></div> }, className: focusType && !neighbors.has(t.id) ? 'graph-node-dim' : 'graph-node', style: { backgroundColor: '#1a2b33', backgroundImage: t.id === project.settings.startTypeId ? 'repeating-linear-gradient(135deg, #e8f4f21b 0 14px, transparent 14px 34px)' : undefined, color: '#f4f8f6', border: `2px solid ${t.color}`, borderRadius: 2, padding: 13, width: 370, height: project.modules.filter(m => m.typeId === t.id).length > 1 ? 320 : 220 }, selected: focusType === t.id }))
   const graphEdges: FlowEdge[] = project.connections.map(c => ({ id: relationKey(c.from, c.to), source: c.from, target: c.to, type: 'relation', data: { weight: c.weight, reverse: project.connections.some(other => other.from === c.to && other.to === c.from) }, selected: activeRelationKey === relationKey(c.from, c.to), style: { stroke: '#b8d9d7', opacity: focusType && c.from !== focusType ? .62 : 1 } }))
+  // Tidies the current layout (rows by height, order kept, snapped to a grid) instead of resetting it.
   const arrange = () => {
-    const positions: Record<string, { x: number; y: number }> = {}
-    let y = 0
-    for (let start = 0; start < project.types.length; start += graphColumns) {
-      const row = project.types.slice(start, start + graphColumns)
-      let x = 0
-      let rowHeight = 0
-      for (const t of row) {
-        const measured = flowRef.current?.getNode(t.id)?.measured
-        positions[t.id] = { x, y }
-        x += (measured?.width ?? 370) + 90
-        rowHeight = Math.max(rowHeight, measured?.height ?? 340)
-      }
-      y += rowHeight + 110
-    }
-    setEditor(current => ({ ...current, graphPositions: positions }))
+    const nodes = graphNodes.map(node => {
+      const live = flowRef.current?.getNode(node.id)
+      return { id: node.id, x: live?.position.x ?? node.position.x, y: live?.position.y ?? node.position.y, width: live?.measured?.width ?? 370, height: live?.measured?.height ?? 340 }
+    })
+    const positions = tidyLayout(nodes)
+    setEditor(current => ({ ...current, graphPositions: { ...current.graphPositions, ...positions } }))
     window.requestAnimationFrame(() => flowRef.current?.fitView({ padding: .24, duration: 260 }))
   }
   const setBounds = (id: string, key: keyof Bounds, value: number) => {

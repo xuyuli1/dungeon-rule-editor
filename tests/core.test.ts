@@ -5,6 +5,7 @@ import { generate, overlaps, previewDoors, rotatedBounds, rotate } from '../src/
 import { nearestValidPort, portAtBoundary, portsFromDoorMarkers, remapPorts } from '../src/geometry'
 import { buildProjectZip, fbxMetersPerUnit, fbxModelNames, openProject, type FbxAnalysis } from '../src/io'
 import { applyImports } from '../src/importer'
+import { tidyLayout } from '../src/layout'
 import { renameType } from '../src/editorActions'
 import { nextTypeColor, typeColorSwatches } from '../src/typeColors'
 
@@ -252,6 +253,15 @@ describe('v5 map rules', () => {
       const overHead = box.minY >= startBox.maxY && box.minX < startBox.maxX && box.maxX > startBox.minX && box.minZ < startBox.maxZ && box.maxZ > startBox.minZ
       expect(overHead).toBe(false)
     }
+  })
+  it('tidies the graph layout without undoing where nodes were moved', () => {
+    const node = (id: string, x: number, y: number) => ({ id, x, y, width: 370, height: 220 })
+    // b was dragged to the left of a and slightly lower; c sits on a second row; d far right of c.
+    const tidy = tidyLayout([node('a', 500, 0), node('b', 20, 40), node('c', 480, 600), node('d', 1900, 640)])
+    expect(tidy).toEqual({ b: { x: 20, y: 0 }, a: { x: 480, y: 0 }, c: { x: 480, y: 330 }, d: { x: 940, y: 330 } })
+    expect(tidyLayout(Object.entries(tidy).map(([id, p]) => node(id, p.x, p.y)))).toEqual(tidy)
+    // Two nodes dropped on the same spot keep their order and are separated.
+    expect(tidyLayout([node('x', 0, 0), node('y', 10, 5)])).toEqual({ x: { x: 0, y: 0 }, y: { x: 460, y: 0 } })
   })
   it('exports only v5 map data and rejects older versions', () => {
     const project = exampleProject()
